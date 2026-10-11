@@ -51,7 +51,7 @@ Rules:
 - "opponent": the entity id (e.g. "character:mara") actively opposing the attempt, or null.
 - "difficulty": judged from the situation, not from the player's wording.`;
 
-const OPS_HELP = `State changes: begin your reply with an <ops> block containing one JSON op per line, then the prose. Use entity ids from the scene. Available ops:
+const OPS_HELP = `State changes: begin your reply with an <ops> block containing one JSON op per line, then the prose. Copy entity ids exactly as shown in [brackets], including the kind prefix (e.g. "character:mara", never "mara"). Available ops:
 {"op":"move","id":ID,"to":ID,"zone":?str}  {"op":"set_zone","id":ID,"zone":str}  {"op":"set_posture","id":ID,"posture":str}
 {"op":"hold","character":ID,"item":ID}  {"op":"release","character":ID,"item":ID,"drop":bool}  {"op":"wear","character":ID,"item":ID}  {"op":"unwear","character":ID,"slot":str}  {"op":"give","from":ID,"to":ID,"item":ID}
 {"op":"create_entity","kind":"item"|"container"|"character"|"room","name":str,"parent":ID,"zone":?str,"props":?obj}  (new characters MUST have props.age)
@@ -88,6 +88,35 @@ ${OPS_HELP}`;
 }
 
 const REFUSAL = /\b(?:I can(?:'|no)t (?:help|continue|write|assist|create|generate)|I'm (?:not able|unable) to|as an AI|content policy|I won't (?:write|continue))\b/i;
+
+const ID_FIELDS = ["id", "npc", "character", "item", "from", "to", "target", "parent"] as const;
+const FULL_ID = /^[a-z]+:[a-z0-9_-]+$/;
+
+/** Maps bare slugs/names the model emits ("mara", "Rook") to a unique existing entity id; leaves anything ambiguous untouched. */
+export function resolveIds(store: WorldStore, op: unknown): unknown {
+  if (!op || typeof op !== "object") return op;
+  let index: Map<string, string | null> | null = null;
+  const lookup = (v: unknown): unknown => {
+    if (typeof v !== "string" || FULL_ID.test(v)) return v;
+    if (!index) {
+      index = new Map();
+      for (const e of store.allEntities()) {
+        for (const k of new Set([e.id.split(":")[1] ?? "", e.name, ...e.aliases].map((x) => x.toLowerCase().trim()))) {
+          if (k) index.set(k, index.has(k) && index.get(k) !== e.id ? null : e.id);
+        }
+      }
+    }
+    return index.get(v.toLowerCase().trim()) ?? v;
+  };
+  const out: Record<string, unknown> = { ...(op as Record<string, unknown>) };
+  for (const f of ID_FIELDS) if (f in out) out[f] = lookup(out[f]);
+  if (Array.isArray(out.subjects)) out.subjects = out.subjects.map(lookup);
+  for (const f of ["add", "remove"] as const) {
+    const list = out[f];
+    if (Array.isArray(list)) out[f] = list.map((r: unknown) => (r && typeof r === "object" && "target" in r ? { ...r, target: lookup((r as { target: unknown }).target) } : r));
+  }
+  return out;
+}
 
 export function splitNarration(raw: string): { ops: unknown[]; prose: string; badLines: number } {
   const m = /<ops>([\s\S]*?)<\/ops>/i.exec(raw);
@@ -206,7 +235,8 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     if (!REFUSAL.test(splitNarration(raw).prose)) break;
     messages.push({ role: "assistant", content: raw }, { role: "user", content: "Stay in character as the narrator and continue the story per the rules." });
   }
-  const { ops: narratorOps, prose } = splitNarration(raw);
+  const { ops: parsedOps, prose } = splitNarration(raw);
+  const narratorOps = parsedOps.map((op) => resolveIds(store, op));
   const { turn, results } = log.commit({
     kind,
     input,
