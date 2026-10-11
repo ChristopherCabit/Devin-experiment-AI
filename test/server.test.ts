@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { buildApp } from "../src/server/app.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { buildApp, seedWorld } from "../src/server/app.js";
+import { SaveManager } from "../src/server/saves.js";
 import { SpendMeter } from "../src/llm/spend.js";
-import { WorldStore } from "../src/world/store.js";
 import type { ChatRequest } from "../src/llm/client.js";
 
 const ORIGIN = "https://adv.example.com";
 
 async function setup() {
-  const store = new WorldStore();
-  const meter = new SpendMeter(store, 0.2);
+  const mainDb = new Database(":memory:");
+  const saves = new SaveManager(mainDb, mkdtempSync(join(tmpdir(), "srv-")), seedWorld);
+  const store = saves.active().store;
+  const meter = new SpendMeter(mainDb, 0.2);
   const lines: string[] = [];
   // Mirrors LlmClient: every call is recorded on the meter.
   const llm = {
@@ -18,8 +24,8 @@ async function setup() {
       return Promise.resolve({ text: "<ops></ops>SECRET STORY TEXT", promptTokens: 1, completionTokens: 1, costUsd });
     },
   };
-  const app = await buildApp({ store, meter, llm, origin: ORIGIN, setupCode: "correct horse", accessLog: (l) => lines.push(l) });
-  return { app, store, meter, lines };
+  const app = await buildApp({ mainDb, saves, meter, llm, origin: ORIGIN, setupCode: "correct horse", accessLog: (l) => lines.push(l) });
+  return { app, store, mainDb, meter, lines };
 }
 
 describe("server", () => {
@@ -37,6 +43,14 @@ describe("server", () => {
       ["GET", "/api/settings"],
       ["PUT", "/api/settings"],
       ["POST", "/api/world/new"],
+      ["GET", "/api/saves"],
+      ["POST", "/api/saves"],
+      ["POST", "/api/saves/0123456789abcdef/load"],
+      ["POST", "/api/saves/0123456789abcdef/duplicate"],
+      ["PUT", "/api/saves/0123456789abcdef"],
+      ["DELETE", "/api/saves/0123456789abcdef"],
+      ["GET", "/api/saves/0123456789abcdef/export"],
+      ["POST", "/api/saves/import"],
       ["POST", "/auth/logout"],
       ["GET", "/nonexistent"],
     ];
@@ -82,9 +96,9 @@ describe("server", () => {
   });
 
   it("plays turns with a session, never logs bodies, and enforces the spend cap", async () => {
-    const { app, store, lines } = await setup();
+    const { app, mainDb, lines } = await setup();
     const { Auth, SESSION_COOKIE } = await import("../src/server/auth.js");
-    const s = new Auth(store.db, "adv.example.com", ORIGIN, "x").createSession();
+    const s = new Auth(mainDb, "adv.example.com", ORIGIN, "x").createSession();
     const headers = { origin: ORIGIN, cookie: `${SESSION_COOKIE}=${s.id}` };
     const state = await app.inject({ method: "GET", url: "/api/state", headers });
     expect(state.statusCode).toBe(200);

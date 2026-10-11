@@ -13,6 +13,8 @@ import type { ChatRequest, ChatResult } from "../llm/client.js";
 import { SpendCapError, type SpendMeter } from "../llm/spend.js";
 import { charProps, clockMinutes } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
+import type Database from "better-sqlite3";
+import { SaveError, type SaveManager } from "./saves.js";
 import { Auth, CHALLENGE_COOKIE, SESSION_COOKIE } from "./auth.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -20,7 +22,8 @@ const PUBLIC_DIR = join(ROOT, "public");
 const WEBAUTHN_BUNDLE = join(ROOT, "node_modules", "@simplewebauthn", "browser", "dist", "bundle", "index.umd.min.js");
 
 export interface AppConfig {
-  store: WorldStore;
+  mainDb: Database.Database;
+  saves: SaveManager;
   meter: SpendMeter;
   llm: { chat(req: ChatRequest): Promise<ChatResult> };
   origin: string;
@@ -81,17 +84,19 @@ export function seedWorld(store: WorldStore, log: TurnLog, seed: Seed = STARTER)
 }
 
 export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
-  const { store, meter, llm } = cfg;
+  const { saves, meter, llm } = cfg;
+  const W = () => saves.active();
   const url = new URL(cfg.origin);
   const secure = url.protocol === "https:";
-  const auth = new Auth(store.db, url.hostname, cfg.origin, cfg.setupCode);
-  const log = new TurnLog(store);
-  if (!store.getEntity(PLAYER_ID)) seedWorld(store, log);
+  const auth = new Auth(cfg.mainDb, url.hostname, cfg.origin, cfg.setupCode);
 
   // Requests are logged by our own metadata-only hook; Fastify's logger is off so bodies can never be logged.
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024, trustProxy: true });
   await app.register(cookie);
   await app.register(fastifyStatic, { root: PUBLIC_DIR, serve: false });
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer", bodyLimit: 20 * 1024 * 1024 }, (_req, body, done) => {
+    done(null, body);
+  });
 
   const cookieOpts = { path: "/", httpOnly: true, secure, sameSite: "strict" as const };
   const sid = (req: FastifyRequest) => req.cookies[SESSION_COOKIE];
@@ -184,27 +189,36 @@ export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
   // --- game ---
   let busy: Promise<unknown> = Promise.resolve();
   const serial = <T>(fn: () => Promise<T> | T): Promise<T> => {
-    const next = busy.then(fn, fn);
+    const run = () => Promise.resolve(fn()).finally(() => saves.touch());
+    const next = busy.then(run, run);
     busy = next.catch(() => undefined);
     return next;
   };
 
+  const guard = <T>(reply: FastifyReply, fn: () => T | Promise<T>) =>
+    serial(fn).catch((e: unknown) => {
+      if (e instanceof SaveError) return reply.code(e.status).send({ error: e.message });
+      throw e;
+    });
+  const NameBody = z.object({ name: z.string().min(1).max(80) });
+
   const state = () => {
-    const player = store.getEntity(PLAYER_ID);
+    const player = W().store.getEntity(PLAYER_ID);
     const p = player ? charProps(player) : null;
-    const here = player?.parent_id ? store.getEntity(player.parent_id) : null;
+    const here = player?.parent_id ? W().store.getEntity(player.parent_id) : null;
     return {
-      settings: getSettings(store),
-      clock: clockMinutes(store),
+      settings: getSettings(W().store),
+      clock: clockMinutes(W().store),
       location: here?.name ?? null,
       zone: p?.scene.zone ?? null,
       sheet: p?.sheet ?? null,
       conditions: (player?.props.conditions as string[] | undefined) ?? [],
-      turns: log
+      turns: W().log
         .history(60)
         .filter((t) => t.kind !== "author")
         .map((t) => ({ n: t.n, kind: t.kind, input: t.input, output: t.output })),
       spend: meter.status(),
+      save: saves.activeInfo(),
     };
   };
 
@@ -214,21 +228,21 @@ export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
     if (!body.success) return reply.code(400).send({ error: "bad request" });
     if (meter.status().blocked) return reply.code(402).send({ error: new SpendCapError().message });
     try {
-      const out = await serial(() => playTurn({ store, log, llm, playerId: PLAYER_ID }, body.data.kind as PlayKind, body.data.input));
+      const out = await serial(() => playTurn({ ...W(), llm, playerId: PLAYER_ID }, body.data.kind as PlayKind, body.data.input));
       return { ...out, state: state() };
     } catch (e) {
       if (e instanceof SpendCapError) return reply.code(402).send({ error: e.message });
       return reply.code(502).send({ error: e instanceof Error && e.name === "LlmError" ? e.message : "turn failed" });
     }
   });
-  const undoAllowed = () => getSettings(store).deathPolicy !== "ironman";
-  const lastPlayable = () => log.history(1)[0];
+  const undoAllowed = () => getSettings(W().store).deathPolicy !== "ironman";
+  const lastPlayable = () => W().log.history(1)[0];
   app.post("/api/undo", (_req, reply) =>
     serial(() => {
       const last = lastPlayable();
       if (!undoAllowed()) return reply.code(409).send({ error: "undo disabled (ironman)" });
       if (!last || last.kind === "author" || last.n <= 2) return reply.code(409).send({ error: "nothing to undo" });
-      log.undo();
+      W().log.undo();
       return state();
     }),
   );
@@ -239,8 +253,8 @@ export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
     if (meter.status().blocked) return reply.code(402).send({ error: new SpendCapError().message });
     try {
       const out = await serial(() => {
-        log.undo();
-        return playTurn({ store, log, llm, playerId: PLAYER_ID }, last.kind as PlayKind, last.input);
+        W().log.undo();
+        return playTurn({ ...W(), llm, playerId: PLAYER_ID }, last.kind as PlayKind, last.input);
       });
       return { ...out, state: state() };
     } catch (e) {
@@ -250,36 +264,86 @@ export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
   });
 
   // --- author mode ---
-  app.get("/api/entities", () => store.allEntities());
+  app.get("/api/entities", () => W().store.allEntities());
   app.put("/api/entities/:id", (req, reply) => {
     const body = EntityBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad request" });
     const id = (req.params as { id: string }).id;
-    const { results } = log.commit({ kind: "author", input: `edit ${id}`, source: "author", ops: [{ op: "author_update", id, ...body.data }] });
+    const { results } = W().log.commit({ kind: "author", input: `edit ${id}`, source: "author", ops: [{ op: "author_update", id, ...body.data }] });
     const r = results[0];
-    return r?.ok ? store.getEntity(id) : reply.code(400).send({ error: r && !r.ok ? r.reason : "failed" });
+    return r?.ok ? W().store.getEntity(id) : reply.code(400).send({ error: r && !r.ok ? r.reason : "failed" });
   });
   app.post("/api/entities", (req, reply) => {
     const body = CreateBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad request" });
-    const { results } = log.commit({ kind: "author", input: `create ${body.data.name}`, source: "author", ops: [{ op: "create_entity", ...body.data }] });
+    const { results } = W().log.commit({ kind: "author", input: `create ${body.data.name}`, source: "author", ops: [{ op: "create_entity", ...body.data }] });
     const r = results[0];
-    return r?.ok ? store.getEntity(r.id ?? "") : reply.code(400).send({ error: r && !r.ok ? r.reason : "failed" });
+    return r?.ok ? W().store.getEntity(r.id ?? "") : reply.code(400).send({ error: r && !r.ok ? r.reason : "failed" });
   });
-  app.get("/api/settings", () => getSettings(store));
+  app.get("/api/settings", () => getSettings(W().store));
   app.put("/api/settings", (req, reply) => {
     const body = SettingsBody.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad request" });
-    const next: WorldSettings = { ...getSettings(store), ...body.data };
-    store.setMeta("settings", next);
+    const next: WorldSettings = { ...getSettings(W().store), ...body.data };
+    W().store.setMeta("settings", next);
     return next;
   });
   app.post("/api/world/new", (req, reply) => {
     if ((req.body as { confirm?: unknown } | undefined)?.confirm !== true) return reply.code(400).send({ error: "confirm required" });
-    return serial(() => {
-      seedWorld(store, log);
+    return guard(reply, () => {
+      saves.load(saves.create("New adventure"));
       return state();
     });
+  });
+
+  // --- saves ---
+  const saveId = (req: FastifyRequest) => (req.params as { id: string }).id;
+  app.get("/api/saves", () => saves.list());
+  app.post("/api/saves", (req, reply) => {
+    const b = NameBody.safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: "bad request" });
+    return guard(reply, () => {
+      saves.load(saves.create(b.data.name));
+      return state();
+    });
+  });
+  app.post("/api/saves/:id/load", (req, reply) =>
+    guard(reply, () => {
+      saves.load(saveId(req));
+      return state();
+    }),
+  );
+  app.post("/api/saves/:id/duplicate", (req, reply) => {
+    const b = NameBody.safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: "bad request" });
+    return guard(reply, () => ({ id: saves.duplicate(saveId(req), b.data.name) }));
+  });
+  app.put("/api/saves/:id", (req, reply) => {
+    const b = NameBody.safeParse(req.body);
+    if (!b.success) return reply.code(400).send({ error: "bad request" });
+    return guard(reply, () => {
+      saves.rename(saveId(req), b.data.name);
+      return { ok: true };
+    });
+  });
+  app.delete("/api/saves/:id", (req, reply) =>
+    guard(reply, () => {
+      saves.remove(saveId(req));
+      return { ok: true };
+    }),
+  );
+  app.get("/api/saves/:id/export", (req, reply) =>
+    guard(reply, () => {
+      const { name, data } = saves.exportBytes(saveId(req));
+      const file = name.replace(/[^\w -]+/g, "_");
+      return reply.header("Content-Type", "application/octet-stream").header("Content-Disposition", `attachment; filename="${file}.db"`).send(data);
+    }),
+  );
+  app.post("/api/saves/import", (req, reply) => {
+    const data = req.body;
+    if (!Buffer.isBuffer(data)) return reply.code(415).send({ error: "send the file as application/octet-stream" });
+    const name = String((req.query as { name?: unknown }).name ?? "Imported");
+    return guard(reply, () => ({ id: saves.importBytes(name, data) }));
   });
 
   return app;

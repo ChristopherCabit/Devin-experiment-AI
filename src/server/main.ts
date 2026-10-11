@@ -1,7 +1,9 @@
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { LlmClient } from "../llm/client.js";
 import { SpendMeter } from "../llm/spend.js";
-import { WorldStore } from "../world/store.js";
-import { buildApp } from "./app.js";
+import { buildApp, seedWorld } from "./app.js";
+import { SaveManager } from "./saves.js";
 
 function required(name: string): string {
   const v = process.env[name];
@@ -9,11 +11,16 @@ function required(name: string): string {
   return v;
 }
 
-const store = new WorldStore(process.env.DB_PATH ?? "/data/game.db");
-const meter = new SpendMeter(store, Number(process.env.MONTHLY_CAP_USD ?? "14"));
+const dataDir = process.env.DATA_DIR ?? "/data";
+const mainDb = new Database(join(dataDir, "main.db"));
+mainDb.pragma("journal_mode = WAL");
+const saves = new SaveManager(mainDb, dataDir, seedWorld);
+saves.migrateLegacy(join(dataDir, "game.db"));
+const meter = new SpendMeter(mainDb, Number(process.env.MONTHLY_CAP_USD ?? "14"));
 const llm = new LlmClient({ apiKey: required("OPENROUTER_API_KEY"), meter });
 const app = await buildApp({
-  store,
+  mainDb,
+  saves,
   meter,
   llm,
   origin: required("APP_ORIGIN"),

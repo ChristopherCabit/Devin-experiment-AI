@@ -5,7 +5,7 @@ primary_region = "iad"
 [build]
 
 [env]
-  DB_PATH = "/data/game.db"
+  DATA_DIR = "/data"
   PORT = "8080"
   MONTHLY_CAP_USD = "14"
 

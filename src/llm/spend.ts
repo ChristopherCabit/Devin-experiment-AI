@@ -1,4 +1,4 @@
-import type { WorldStore } from "../world/store.js";
+import type Database from "better-sqlite3";
 
 /**
  * Monthly spend ledger. Kept outside the turn-diff tables so undo never
@@ -6,11 +6,11 @@ import type { WorldStore } from "../world/store.js";
  */
 export class SpendMeter {
   constructor(
-    private readonly store: WorldStore,
+    private readonly db: Database.Database,
     readonly capUsd: number,
     private readonly now: () => Date = () => new Date(),
   ) {
-    store.db.exec("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL NOT NULL, calls INTEGER NOT NULL)");
+    db.exec("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL NOT NULL, calls INTEGER NOT NULL)");
   }
 
   private month(): string {
@@ -18,12 +18,12 @@ export class SpendMeter {
   }
 
   spentThisMonth(): number {
-    const row = this.store.db.prepare("SELECT usd FROM spend WHERE month = ?").get(this.month()) as { usd: number } | undefined;
+    const row = this.db.prepare("SELECT usd FROM spend WHERE month = ?").get(this.month()) as { usd: number } | undefined;
     return row?.usd ?? 0;
   }
 
   record(usd: number): void {
-    this.store.db
+    this.db
       .prepare(
         `INSERT INTO spend (month, usd, calls) VALUES (?, ?, 1)
          ON CONFLICT(month) DO UPDATE SET usd = usd + excluded.usd, calls = calls + 1`,

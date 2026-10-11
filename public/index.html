@@ -67,6 +67,15 @@
   </main>
 
   <main id="tab-world" class="tab" hidden>
+    <h3>Saves</h3>
+    <div id="saves"></div>
+    <input id="save-name" placeholder="Name (for New / Duplicate)">
+    <div class="row">
+      <button id="btn-save-new">New adventure</button>
+      <button id="btn-save-dup">Duplicate current</button>
+      <label class="button">Import<input id="save-import" type="file" accept=".db,application/octet-stream" hidden></label>
+    </div>
+    <h3>This world</h3>
     <label>Title <input id="s-title"></label>
     <label>Premise <textarea id="s-premise" rows="6"></textarea></label>
     <label>Style <textarea id="s-style" rows="3"></textarea></label>
@@ -84,7 +93,6 @@
     <p id="sheet"></p>
     <p id="spend"></p>
     <div class="row">
-      <button id="btn-new-world" class="danger">New world (wipes story)</button>
       <button id="btn-add-passkey">Add passkey</button>
       <button id="btn-logout">Sign out</button>
     </div>

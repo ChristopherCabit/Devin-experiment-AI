@@ -14,7 +14,7 @@ export default tseslint.config(
     files: ["public/**/*.js"],
     languageOptions: {
       sourceType: "script",
-      globals: { document: "readonly", window: "readonly", fetch: "readonly", Option: "readonly", confirm: "readonly", SimpleWebAuthnBrowser: "readonly" },
+      globals: { document: "readonly", window: "readonly", fetch: "readonly", Option: "readonly", confirm: "readonly", prompt: "readonly", URL: "readonly", setTimeout: "readonly", SimpleWebAuthnBrowser: "readonly" },
     },
   },
   {

@@ -33,3 +33,7 @@ nav button.active { border-color: var(--accent); }
 .modes label { margin: 0; flex: 1; text-align: center; }
 .modes input { display: none; }
 .modes label:has(input:checked) { color: var(--fg); border-bottom: 2px solid var(--accent); }
+
+.save { border: 1px solid #333842; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.save.active { border-color: var(--accent); }
+label.button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #333842; border-radius: 8px; padding: 8px 10px; background: var(--panel); cursor: pointer; }

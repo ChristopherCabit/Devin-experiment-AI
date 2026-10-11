@@ -159,6 +159,7 @@ const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPoli
 async function loadSettings() {
   const s = await api("GET", "/api/settings");
   for (const k of SETTINGS) $(`s-${k}`).value = s[k];
+  await loadSaves();
 }
 $("btn-settings-save").onclick = async () => {
   const body = {};
@@ -166,10 +167,67 @@ $("btn-settings-save").onclick = async () => {
   try { await api("PUT", "/api/settings", body); $("world-msg").textContent = "Saved."; render(await api("GET", "/api/state")); }
   catch (e) { $("world-msg").textContent = e.message; }
 };
-$("btn-new-world").onclick = async () => {
-  if (!confirm("Start a new world? This deletes the current story.")) return;
-  try { render(await api("POST", "/api/world/new", { confirm: true })); $("world-msg").textContent = "New world started."; }
-  catch (e) { $("world-msg").textContent = e.message; }
+// ---------- saves ----------
+const say = (m) => { $("world-msg").textContent = m; };
+async function exportSave(s) {
+  const r = await fetch(`/api/saves/${s.id}/export`);
+  if (!r.ok) throw new Error(`export failed (${r.status})`);
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${s.name.replace(/[^\w -]+/g, "_")}.db`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+async function loadSaves() {
+  const list = await api("GET", "/api/saves");
+  const box = $("saves");
+  box.textContent = "";
+  for (const s of list) {
+    const row = document.createElement("div");
+    row.className = s.active ? "save active" : "save";
+    const title = document.createElement("div");
+    title.textContent = s.active ? `${s.name} (current)` : s.name;
+    const btns = document.createElement("div");
+    btns.className = "row";
+    const add = (label, fn, cls) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.onclick = () => fn().then(loadSaves).catch((e) => say(e.message));
+      btns.append(b);
+    };
+    if (!s.active) add("Load", async () => { render(await api("POST", `/api/saves/${s.id}/load`, {})); await loadSettings(); say(`Loaded ${s.name}.`); });
+    add("Rename", async () => { const n = prompt("New name", s.name); if (n) await api("PUT", `/api/saves/${s.id}`, { name: n }); });
+    add("Export", () => exportSave(s));
+    if (!s.active) add("Delete", async () => { if (confirm(`Delete "${s.name}"? (It is moved to the server's deleted folder, not erased.)`)) await api("DELETE", `/api/saves/${s.id}`, {}); }, "danger");
+    row.append(title, btns);
+    box.append(row);
+  }
+}
+$("btn-save-new").onclick = async () => {
+  try { render(await api("POST", "/api/saves", { name: $("save-name").value.trim() || "New adventure" })); await loadSettings(); say("New adventure started."); }
+  catch (e) { say(e.message); }
+};
+$("btn-save-dup").onclick = async () => {
+  try {
+    const st = await api("GET", "/api/state");
+    await api("POST", `/api/saves/${st.save.id}/duplicate`, { name: $("save-name").value.trim() || `${st.save.name} (copy)` });
+    await loadSaves();
+    say("Copy saved.");
+  } catch (e) { say(e.message); }
+};
+$("save-import").onchange = async (ev) => {
+  const f = ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  try {
+    const r = await fetch(`/api/saves/import?name=${encodeURIComponent(f.name.replace(/\.db$/, ""))}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "import failed");
+    await loadSaves();
+    say("Imported. Tap Load to play it.");
+  } catch (e) { say(e.message); }
 };
 
 // ---------- boot ----------
