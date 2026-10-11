@@ -163,7 +163,7 @@ Steps:
    On failure, regenerate up to N times with the reason attached.
 9. **Persist (code).** Store the turn and diff, embed the turn locally, update entity triggers, and schedule summaries.
 
-Op set (v1): `create_entity`, `move`, `set_zone`, `set_posture`, `hold`, `release`, `wear`, `unwear`, `give`, `set_condition`, `emotion`, `thought`, `forget_thought`, `relationship_note`, `fact`, `time_advance`, `resource_delta` (code-only), `progression` (code-only).
+Op set (v1): `create_entity`, `move`, `set_zone`, `set_posture`, `hold`, `release`, `wear`, `unwear`, `give`, `set_condition`, `relation`, `emotion`, `thought`, `forget_thought`, `relationship_note`, `fact`, `time_advance`, `resource_delta` (code-only), `progression` (code-only).
 
 ### 7.1 Death policy (per world, changeable in author mode)
 | Policy | On lethal outcome | Retry / Undo |
