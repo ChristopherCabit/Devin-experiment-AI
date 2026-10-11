@@ -1,4 +1,5 @@
 # Single always-small machine; SQLite lives on the volume.
+app = "adv-d25197"
 primary_region = "iad"
 
 [build]
