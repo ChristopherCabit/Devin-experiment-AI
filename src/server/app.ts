@@ -100,7 +100,7 @@ export async function buildApp(cfg: AppConfig): Promise<FastifyInstance> {
 
   app.addHook("onRequest", async (req, reply) => {
     (req as FastifyRequest & { t0: number }).t0 = performance.now();
-    const route = `${req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`;
+    const route = `${req.method === "HEAD" ? "GET" : req.method} ${req.routeOptions.url ?? req.url.split("?")[0]}`;
     if (req.method !== "GET" && req.method !== "HEAD" && req.headers.origin !== cfg.origin) {
       return reply.code(403).send({ error: "bad origin" });
     }

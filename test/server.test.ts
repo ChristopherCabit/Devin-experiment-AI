@@ -51,6 +51,8 @@ describe("server", () => {
     const { app } = await setup();
     const r = await app.inject({ method: "GET", url: "/" });
     expect(r.statusCode).toBe(200);
+    expect((await app.inject({ method: "HEAD", url: "/" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "HEAD", url: "/api/state" })).statusCode).toBe(401);
     expect(r.headers["cache-control"]).toBe("no-store");
     expect(r.headers["x-frame-options"]).toBe("DENY");
     expect(r.headers["referrer-policy"]).toBe("no-referrer");

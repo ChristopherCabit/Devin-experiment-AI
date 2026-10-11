@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   deathPolicy: "consequence",
   narratorModel: "deepseek/deepseek-chat-v3-0324",
   parserModel: "deepseek/deepseek-chat-v3-0324",
-  contextTokens: 24000,
+  contextTokens: 32000,
 };
 
 export function getSettings(store: WorldStore): WorldSettings {
