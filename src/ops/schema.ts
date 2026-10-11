@@ -19,6 +19,15 @@ export const Op = z.discriminatedUnion("op", [
     })
     .strict(),
   z.object({ op: z.literal("move"), id: EntityId, to: EntityId, zone: Zone.optional() }).strict(),
+  z
+    .object({
+      op: z.literal("author_update"),
+      id: EntityId,
+      name: Name.optional(),
+      aliases: z.array(Name).optional(),
+      props: z.record(z.string(), z.unknown()).optional(),
+    })
+    .strict(),
   z.object({ op: z.literal("set_zone"), id: EntityId, zone: Zone }).strict(),
   z.object({ op: z.literal("set_posture"), id: EntityId, posture: Name }).strict(),
   z.object({ op: z.literal("hold"), character: EntityId, item: EntityId, hand: Hand.optional() }).strict(),
@@ -66,6 +75,9 @@ export const Op = z.discriminatedUnion("op", [
 export type Op = z.infer<typeof Op>;
 export type OpInput = z.input<typeof Op>;
 export type OpName = Op["op"];
+
+/** Ops only author mode may emit. */
+export const AUTHOR_ONLY_OPS: ReadonlySet<OpName> = new Set(["author_update"]);
 
 /** Ops the narrator may never emit: they come only from code-resolved outcomes. */
 export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression"]);

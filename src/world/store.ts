@@ -58,9 +58,14 @@ CREATE TABLE IF NOT EXISTS turns (
   ops TEXT NOT NULL,
   results TEXT NOT NULL,
   changes TEXT NOT NULL,
+  output TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 `;
+
+/** Save-format version. To change the format, append a migration; never edit an existing one. Migrations only add. */
+export const SCHEMA_VERSION = 1;
+const MIGRATIONS: ((db: Database.Database) => void)[] = [(db) => db.exec(SCHEMA)];
 
 function rowToEntity(row: EntityRow): Entity {
   return Entity.parse({
@@ -94,7 +99,12 @@ export class WorldStore {
   constructor(filename = ":memory:") {
     this.db = new Database(filename);
     this.db.pragma("journal_mode = WAL");
-    this.db.exec(SCHEMA);
+    const version = this.db.pragma("user_version", { simple: true }) as number;
+    if (version > SCHEMA_VERSION) throw new Error(`save format v${version} is newer than this app (v${SCHEMA_VERSION})`);
+    this.db.transaction(() => {
+      for (let v = version; v < SCHEMA_VERSION; v++) MIGRATIONS[v]?.(this.db);
+      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    })();
   }
 
   close(): void {

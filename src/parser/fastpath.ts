@@ -14,7 +14,7 @@ export type FastPathResult =
   | { kind: "fail"; action: string; reason: string };
 
 const ARTICLES = /^(?:the|a|an|my|your|some|this|that)\s+/;
-const RESTRAINT = /restrain|tied|bound|pinned|held_by|grappled/;
+export const RESTRAINT = /restrain|tied|bound|pinned|held_by|grappled/;
 
 export function normalizeName(s: string): string {
   let t = s.toLowerCase().trim().replace(/[.!?]+$/, "").replace(/\s+/g, " ");
@@ -229,7 +229,7 @@ function go(store: WorldStore, player: Entity, cands: Candidate[], target: strin
   }
   if (thing.ambiguous) return null;
 
-  const rooms = store.entitiesOfKind("room").filter((r) => normalizeName(r.name) === name);
+  const rooms = store.entitiesOfKind("room").filter((r) => [r.name, ...r.aliases].some((x) => normalizeName(x) === name));
   if (rooms.some((r) => r.id === here.id)) {
     return { kind: "fail", action: `go to ${here.name}`, reason: `You're already in the ${here.name}.` };
   }

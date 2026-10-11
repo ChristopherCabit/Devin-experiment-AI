@@ -20,7 +20,7 @@ import {
   roomProps,
   slugify,
 } from "../world/queries.js";
-import { ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
+import { AUTHOR_ONLY_OPS, ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
 
 export interface Limits {
   /** Largest single time jump the narrator may propose; larger requests are clamped. */
@@ -202,6 +202,16 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       } else {
         store.putEntity({ ...e, parent_id: target.id });
       }
+      return {};
+    }
+
+    case "author_update": {
+      const e = need(store, op.id);
+      let props = op.props ?? e.props;
+      if (e.kind === "character") props = CharacterProps.parse(props);
+      else if (isLocation(e)) props = RoomProps.parse(props);
+      else if (PORTABLE.includes(e.kind)) props = ItemProps.parse(props);
+      store.putEntity({ ...e, name: op.name ?? e.name, aliases: op.aliases ?? e.aliases, props });
       return {};
     }
 
@@ -402,8 +412,12 @@ export function applyOp(store: WorldStore, raw: unknown, ctx: ApplyContext): OpR
     return { ok: false, op: raw, reason: `invalid op: ${reason}` };
   }
   const op = parsed.data;
-  if (ctx.source === "narrator" && ENGINE_ONLY_OPS.has(op.op)) {
+  const narratorSpend = op.op === "resource_delta" && op.delta < 0 && op.resource !== "hp";
+  if (ctx.source === "narrator" && ENGINE_ONLY_OPS.has(op.op) && !narratorSpend) {
     return { ok: false, op, reason: `${op.op} is engine-only` };
+  }
+  if (ctx.source !== "author" && AUTHOR_ONLY_OPS.has(op.op)) {
+    return { ok: false, op, reason: `${op.op} is author-only` };
   }
   const limits = { ...DEFAULT_LIMITS, ...ctx.limits };
   try {
