@@ -29,7 +29,7 @@ Status: draft for review. No code has been written yet.
 1. **Code owns hard state.** Positions, items, containment, capabilities, injuries, resources and time are authoritative records. The LLM proposes changes as typed ops, and code validates and applies them.
 2. **The LLM owns interpretation and prose.** It handles intent parsing, difficulty estimates for novel actions (clamped by code), narration, and NPC inner life.
 3. **Open world.** Code blocks only what *contradicts recorded state*, never what is merely *unrecorded*. New things are created on first mention, with conservative defaults.
-4. **You cannot author for others.** Your input is parsed into *your character's attempts*. Claims about outcomes, NPC reactions or world facts are stripped. NPC responses come from the NPC's own mind.
+4. **You cannot author for others.** Your input is parsed into *your character's attempts*. Claims about outcomes, NPC reactions or world facts are never taken as fact: they become tone hints or your character's beliefs (§7). NPC responses come from the NPC's own mind.
 5. **Capability comes from the sheet only.** Prose, summaries and memories are never a source of truth for how strong or skilled you are.
 6. **Soft state is descriptive, not numeric.** Emotions, desires and relationships are free text, interpreted through each character's personality. They are never used as numeric gates (§5.3).
 
