@@ -37,7 +37,7 @@ Status: draft for review. No code has been written yet.
 
 ```
  phone / PC browser
-        │  HTTPS (auth at the edge, §13)
+        │  HTTPS via Fly proxy (in-app passkey auth, §13)
         ▼
  ┌────────────────────────── app server (single process) ──────────────────────────┐
  │  Web UI (play + author mode)                                                     │
@@ -259,23 +259,40 @@ Code packs the blocks in priority order, truncating within each block, so the bu
 **Defaults that would retain chat content.** Each is flagged at setup and verified as part of deploy:
 - Provider privacy toggles: prompt logging opt-in, training opt-in, non-ZDR fallback routing.
 - Host log retention and any log drains.
-- Cloudflare: Logpush and Workers/Access logging, if used. Access logs are auth metadata only, with no bodies.
+- Fly: proxy/edge request logging (verify it is metadata only, never bodies), log retention, and any log shipper/drain (none configured).
 - Browser: service-worker or HTTP caching of story responses (disabled).
 
-## 13. Hosting and auth (decision needed)
+## 13. Hosting and auth
 
-| Option | Cost | Notes |
-|---|---|---|
-| **A. Hetzner VPS + Cloudflare Tunnel + Cloudflare Access** | ~€4–5 VPS + ~$1/mo domain | No inbound ports open at all; the tunnel dials out. Access gives login (email OTP or passkey via IdP) in front of the app. Needs a domain on Cloudflare. You patch the OS (unattended-upgrades). |
-| **B1. Fly.io + cloudflared + Cloudflare Access** | ~$4–6 + ~$1/mo domain | Public Fly IPs released, so the app is not reachable through Fly's proxy. A `cloudflared` tunnel runs inside the machine and dials out, with Access in front. Same exposure as A, but Fly manages the host. Needs a domain on Cloudflare. |
-| **B2. Fly.io + Tailscale** | ~$4–6 | No public IPs. Reachable only on your tailnet through Tailscale HTTPS (`*.ts.net`). No domain needed; Tailscale's personal plan is free. Needs the Tailscale client running on your phone and PC. |
-| **B3. Fly.io public + app-level auth** | ~$4–6 | Login built into the app: passkey/WebAuthn only, rate limiting, secure/HttpOnly/SameSite cookies, HSTS, CSP, `no-store`. Fine for a single user, but code that runs before login is internet-facing, so one auth bug exposes everything. |
+**Decision: B3. Fly.io machine + volume, public HTTPS, with auth inside the app.** It needs no client app or extra login layer on any device, and multi-user accounts can be added later without restructuring.
 
-Ranking: A ≈ B1 ≈ B2 > B3. In A, B1 and B2 nothing listens publicly and auth happens before traffic reaches the app. All B options: before deploy, verify from the docs that Fly's proxy logs only metadata, never bodies. Opening it publicly is a check-in point before deploy.
+- **Host:** 1 small Fly machine (shared CPU, 1 GB RAM for the embedding model) plus a Fly volume for SQLite. The URL is `*.fly.dev`, with a custom domain optional later. TLS is terminated by Fly.
+- **Secrets:** the provider API key, the DB key, the backup key and the one-time setup code are stored only as Fly secrets.
+
+**Auth hardening.** In B3 the app's own login is the only barrier, so:
+- Passkey/WebAuthn only: no passwords, no public signup.
+- First-run registration requires a one-time setup code (a Fly secret) and closes once a passkey exists. Adding more passkeys requires being logged in.
+- Default-deny routing: only the login page, the WebAuthn endpoints and static assets are reachable without logging in. Everything else requires a valid session.
+- Sessions:
+  - opaque random IDs, stored server-side;
+  - cookie flags `Secure`, `HttpOnly`, `SameSite=Strict`, `__Host-` prefix;
+  - idle and absolute expiry;
+  - logout revokes the session.
+- Rate limiting on auth endpoints per IP and globally, with exponential lockout.
+- Headers: HSTS, strict CSP (no inline script), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on API responses.
+- CSRF: SameSite=Strict plus Origin-header checks on state-changing requests.
+- Minimal pre-auth code surface. Dependencies are pinned, and CI runs `npm audit`.
+- Tests:
+  - an automated check that every registered route, except the allow-listed ones, returns 401 when called without a session;
+  - tests for setup-code reuse and lockout.
+
+Rejected alternatives: A (Hetzner + Cloudflare Tunnel/Access), B1 (Fly + cloudflared + Access) and B2 (Fly + Tailscale) would keep the app off the public internet, but they add a separate login layer (A/B1) or a client app (B2), and they would need replacing if this ever went multi-user.
+
+The first public deploy remains a check-in point.
 
 ## 14. Cost model and spend cap
 Estimates; to be verified against live pricing.
-- **Fixed:** ~$5–7 (host + domain).
+- **Fixed:** ~$4–6 (Fly machine + volume). A domain is optional (~$1/mo).
 - **Per turn:**
   - DeepSeek V3-class narrator at 20k context: ≈ $0.007. At 32k: ≈ $0.010.
   - RP-tuned 70B narrator: ≈ $0.016.
@@ -296,7 +313,7 @@ Estimates; to be verified against live pricing.
 - **Deploy:** Docker image, GitHub Actions CI.
 
 ## 16. Verification (definition of done for deploy)
-1. **HTTPS:** the live URL serves over valid TLS. Unauthenticated requests are rejected at the edge (A) or by the app (B).
+1. **HTTPS:** the live URL serves over valid TLS. Every non-allow-listed route rejects unauthenticated requests (§13). Registration is closed after setup.
 2. **Zero retention:**
    - provider settings and routing flags confirmed via API where exposed; otherwise screenshot-confirmed by you;
    - requests show ZDR routing;
@@ -311,13 +328,12 @@ Estimates; to be verified against live pricing.
 2. **LLM loop:** parser, adjudicator, narrator with ops, verifier, spend meter, provider client with ZDR flags.
 3. **Memory:** summaries, entity cards, fact ledger, local embeddings and hybrid retrieval, context builder with budget.
 4. **NPC minds and characters:** core spec, brains, volatility, routines, off-screen sim, casting guide, NPC generation.
-5. **UI:** play view (mobile), author mode, world/ruleset editor, cost display.
+5. **UI + auth:** play view (mobile), author mode, world/ruleset editor, cost display, passkey auth with the §13 hardening.
 6. **Narrator shortlist eval:** cost per turn, refusal rate, long-run coherence. You pick.
 7. **Deploy + verification (§16).**
 
 Milestones 1–3 give a playable text-only build for early feedback.
 
 ## 18. Open decisions
-1. Hosting: A, B1, B2 or B3 (§13). A and B1 need a domain.
-2. LLM provider: OpenRouter (ZDR routing) is the default. An alternative is a single direct ZDR provider.
-3. Narrator model: chosen after the milestone 6 eval.
+1. LLM provider: OpenRouter (ZDR routing) is the default. An alternative is a single direct ZDR provider.
+2. Narrator model: chosen after the milestone 6 eval.
