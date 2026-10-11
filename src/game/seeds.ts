@@ -25,10 +25,11 @@ export const STARTER: Seed = {
       id: "room:common",
       kind: "room",
       name: "Common Room",
+      aliases: ["downstairs", "taproom"],
       parent: "place:inn",
       props: { zones: ["door", "bar", "hearth", "corner table", "stairs"], adjacent: [["bar", "hearth"], ["hearth", "corner table"], ["bar", "stairs"]], description: "Low beams, a crackling hearth, a scarred oak bar." },
     },
-    { op: "create_entity", id: "room:upstairs", kind: "room", name: "Your Room", parent: "place:inn", props: { zones: ["door", "bed", "window"], description: "A narrow rented room under the eaves." } },
+    { op: "create_entity", id: "room:upstairs", kind: "room", name: "Your Room", aliases: ["upstairs", "my room", "rented room"], parent: "place:inn", props: { zones: ["door", "bed", "window"], description: "A narrow rented room under the eaves." } },
     { op: "create_entity", id: "place:street", kind: "place", name: "Muddy Street", parent: "region:marrow" },
     { op: "create_entity", id: "room:street", kind: "room", name: "Street", parent: "place:street" },
     {

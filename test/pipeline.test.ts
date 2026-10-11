@@ -88,6 +88,37 @@ describe("playTurn", () => {
   });
 });
 
+describe("travel", () => {
+  const parse = (destination: string, scope: string) =>
+    JSON.stringify({ attempt: `tries to go to ${destination}`, kind: "trivial", difficulty: "trivial", skill: null, opponent: null, framing: [], assumptions: [], dropped: [], destination, destination_scope: scope });
+
+  it("creates an unknown destination in code and shows the narrator the new scene", async () => {
+    const { store, log, calls, deps } = game([parse("the market", "elsewhere"), "<ops></ops>Stalls everywhere."]);
+    const out = await playTurn(deps, "do", "I head to the market");
+    expect(out.rejected).toEqual([]);
+    const me = store.getEntity(PLAYER_ID)!;
+    expect(me.parent_id).toBe("room:market");
+    expect(store.getEntity("room:market")?.parent_id).toBe("place:market");
+    expect(calls[1]?.messages[1]?.content).toMatch(/Location: Marrowfield > Market > Market/);
+    log.undo();
+    expect(store.getEntity(PLAYER_ID)!.parent_id).toBe("room:common");
+    expect(store.getEntity("room:market")).toBeNull();
+  });
+
+  it("moves to an existing location by partial name", async () => {
+    const { store, deps } = game([parse("the street", "elsewhere"), "<ops></ops>Out you go."]);
+    await playTurn(deps, "do", "I wander out onto the street");
+    expect(store.getEntity(PLAYER_ID)!.parent_id).toBe("room:street");
+  });
+
+  it("fast-path moves are visible in the narrator's scene", async () => {
+    const { calls, deps } = game(["<ops></ops>Your room."]);
+    await playTurn(deps, "do", "go upstairs");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.messages[1]?.content).toMatch(/Location: .*Your Room/);
+  });
+});
+
 describe("resolveIds", () => {
   it("maps bare slugs and names to unique entity ids", () => {
     const store = new WorldStore();

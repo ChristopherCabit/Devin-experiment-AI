@@ -229,7 +229,7 @@ function go(store: WorldStore, player: Entity, cands: Candidate[], target: strin
   }
   if (thing.ambiguous) return null;
 
-  const rooms = store.entitiesOfKind("room").filter((r) => normalizeName(r.name) === name);
+  const rooms = store.entitiesOfKind("room").filter((r) => [r.name, ...r.aliases].some((x) => normalizeName(x) === name));
   if (rooms.some((r) => r.id === here.id)) {
     return { kind: "fail", action: `go to ${here.name}`, reason: `You're already in the ${here.name}.` };
   }
