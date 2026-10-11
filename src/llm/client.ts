@@ -73,7 +73,6 @@ export class LlmClient {
       temperature: req.temperature ?? 0.8,
       ...(req.json ? { response_format: { type: "json_object" } } : {}),
       provider: { zdr: true, data_collection: "deny" },
-      usage: { include: true },
     };
   }
 
