@@ -116,7 +116,9 @@ export function resolveIds(store: WorldStore, op: unknown): unknown {
     }
     return index.get(v.toLowerCase().trim()) ?? v;
   };
-  const out: Record<string, unknown> = { ...(op as Record<string, unknown>) };
+  const out: Record<string, unknown> = Object.fromEntries(
+    Object.entries(op as Record<string, unknown>).filter(([k, v]) => v !== null || k === "parent"),
+  );
   for (const f of ID_FIELDS) if (f in out) out[f] = lookup(out[f]);
   if ((out.op === "thought" || out.op === "forget_thought") && typeof out.key === "string") {
     out.key = out.key.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);

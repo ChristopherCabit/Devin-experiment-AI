@@ -150,6 +150,10 @@ describe("authority edge cases", () => {
 });
 
 describe("resolveIds", () => {
+  it("drops null optional fields the model emits", () => {
+    expect(resolveIds(new WorldStore(), { op: "create_entity", kind: "item", name: "Bread", parent: "character:you", zone: null })).toEqual({ op: "create_entity", kind: "item", name: "Bread", parent: "character:you" });
+  });
+
   it("slugifies thought keys", () => {
     const store = new WorldStore();
     expect(resolveIds(store, { op: "thought", npc: "character:mara", key: "Feelings About You", text: "x" })).toMatchObject({ key: "feelings_about_you" });
