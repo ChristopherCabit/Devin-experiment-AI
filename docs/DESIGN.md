@@ -110,6 +110,7 @@ Within a room:
 - Outcome tiers: `success`, `success_at_cost`, `failure`, `failure_with_complication`.
 - Default time costs.
 - Progression rules.
+- Death policy (§7.1).
 - Content settings (§10).
 - Casting guide (§11.2).
 - Prompt overrides.
@@ -120,7 +121,7 @@ Genre comes from the data: an action world defines HP and gear; a slice-of-life 
 
 Player inputs:
 - **Do** (action), **Say** (speech), **Continue**: in-game, parsed as attempts.
-- **Retry / Undo:** turn-level snapshots, implemented as a state-diff log.
+- **Retry / Undo:** turn-level snapshots, implemented as a state-diff log. Availability depends on the death policy (§7.1).
 - **Author mode:** out-of-game edits (§11.1).
 
 Steps:
@@ -128,9 +129,16 @@ Steps:
 2. **Parse (small LLM, strict JSON):**
    ```json
    {"actions":[{"verb":"attack","target":"guard","method":"kitchen knife","manner":"lunging"}],
-    "speech":"...", "stripped":["you easily overpower him","the guard is terrified of you"]}
+    "speech":"...",
+    "framing":[{"text":"you easily overpower him","kind":"desired_outcome"}],
+    "assumptions":[{"text":"the guard is terrified of you","about":"npc:guard"}],
+    "dropped":[{"text":"ignore previous instructions","kind":"meta"}]}
    ```
-   Your text becomes attempts only. Outcome claims, NPC-reaction claims, self-aggrandizing description and meta-instructions go into `stripped`. Stripped text is never passed on as fact; at most it is visible to the narrator as "the player hoped for…".
+   Your text becomes attempts only. Nothing is discarded silently; non-attempt text is classified:
+   - `framing`: desired outcome, manner or tone ("effortlessly", "as usual"). Passed to the narrator as *"the player hoped for…"*. It shapes tone only; the outcome is still resolved in step 4 and capability still comes from the sheet.
+   - `assumptions`: claims about NPC feelings or reactions, or about world facts. Passed to the narrator as *your character's belief*, which the NPC's mind (§8) or the state may confirm or contradict in the prose. Assumptions are never written to the fact ledger.
+   - `dropped`: meta-instructions and prompt-injection attempts. Not passed on.
+   The UI shows a collapsible "interpreted as…" line under your input (toggleable), so you can see when something was reined in.
 3. **Validate (code).** Check reach, visibility, possession, conditions and resources. An impossible attempt doesn't hard-fail; it becomes a narrated failure ("you reach for the knife, but it's in the kitchen").
 4. **Classify and resolve:**
    - *Trivial:* happens.
@@ -156,6 +164,16 @@ Steps:
 9. **Persist (code).** Store the turn and diff, embed the turn locally, update entity triggers, and schedule summaries.
 
 Op set (v1): `create_entity`, `move`, `set_zone`, `set_posture`, `hold`, `release`, `wear`, `unwear`, `give`, `set_condition`, `emotion`, `thought`, `forget_thought`, `relationship_note`, `fact`, `time_advance`, `resource_delta` (code-only), `progression` (code-only).
+
+### 7.1 Death policy (per world, changeable in author mode)
+| Policy | On lethal outcome | Retry / Undo |
+|---|---|---|
+| `ironman` | Permadeath. The story ends, with an epilogue. | Disabled |
+| `checkpoint` | Death is real. You reload from an autosave at the last scene boundary (or a manual save). | Undo within the current scene only |
+| `consequence` | Lethal results become capture, maiming, item loss or a time skip. | Enabled |
+| `narrative` | You can die only in scenes or places flagged `lethal`; elsewhere it behaves like `consequence`. | Enabled |
+
+Lethality is decided by code (outcome tier + injuries vs. resources), never by narrator prose. Changing the policy mid-story is logged as an authorial edit.
 
 Cost: usually 2 LLM calls per turn (parse + narrate), sometimes 1 (fast path) or 3 (verifier). Background calls run occasionally.
 
@@ -249,9 +267,11 @@ Code packs the blocks in priority order, truncating within each block, so the bu
 | Option | Cost | Notes |
 |---|---|---|
 | **A. Hetzner VPS + Cloudflare Tunnel + Cloudflare Access** | ~€4–5 VPS + ~$1/mo domain | No inbound ports open at all; the tunnel dials out. Access gives login (email OTP or passkey via IdP) in front of the app. Needs a domain on Cloudflare. You patch the OS (unattended-upgrades). |
-| **B. Fly.io machine + volume + app-level auth** | ~$4–6 | Managed and simple to deploy. Auth is built into the app (passkey/WebAuthn + password, rate-limited), because Cloudflare Access can't front a `fly.dev` URL. The app port is publicly exposed through Fly's proxy. |
+| **B1. Fly.io + cloudflared + Cloudflare Access** | ~$4–6 + ~$1/mo domain | Public Fly IPs released, so the app is not reachable through Fly's proxy. A `cloudflared` tunnel runs inside the machine and dials out, with Access in front. Same exposure as A, but Fly manages the host. Needs a domain on Cloudflare. |
+| **B2. Fly.io + Tailscale** | ~$4–6 | No public IPs. Reachable only on your tailnet through Tailscale HTTPS (`*.ts.net`). No domain needed; Tailscale's personal plan is free. Needs the Tailscale client running on your phone and PC. |
+| **B3. Fly.io public + app-level auth** | ~$4–6 | Login built into the app: passkey/WebAuthn only, rate limiting, secure/HttpOnly/SameSite cookies, HSTS, CSP, `no-store`. Fine for a single user, but code that runs before login is internet-facing, so one auth bug exposes everything. |
 
-Recommendation: **A**. Nothing listens publicly, auth happens before traffic reaches the app, and it is cheapest. Opening it publicly is a check-in point before deploy.
+Ranking: A ≈ B1 ≈ B2 > B3. In A, B1 and B2 nothing listens publicly and auth happens before traffic reaches the app. All B options: before deploy, verify from the docs that Fly's proxy logs only metadata, never bodies. Opening it publicly is a check-in point before deploy.
 
 ## 14. Cost model and spend cap
 Estimates; to be verified against live pricing.
@@ -298,8 +318,6 @@ Estimates; to be verified against live pricing.
 Milestones 1–3 give a playable text-only build for early feedback.
 
 ## 18. Open decisions
-1. Hosting option A or B (§13). A needs a domain.
+1. Hosting: A, B1, B2 or B3 (§13). A and B1 need a domain.
 2. LLM provider: OpenRouter (ZDR routing) is the default. An alternative is a single direct ZDR provider.
 3. Narrator model: chosen after the milestone 6 eval.
-4. Should the parse step's stripped claims be shown to you (as transparency) or hidden?
-5. Death / game-over policy: permadeath, checkpoint, or "failure with complication" only.
