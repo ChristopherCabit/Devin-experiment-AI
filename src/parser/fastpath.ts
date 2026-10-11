@@ -14,7 +14,7 @@ export type FastPathResult =
   | { kind: "fail"; action: string; reason: string };
 
 const ARTICLES = /^(?:the|a|an|my|your|some|this|that)\s+/;
-const RESTRAINT = /restrain|tied|bound|pinned|held_by|grappled/;
+export const RESTRAINT = /restrain|tied|bound|pinned|held_by|grappled/;
 
 export function normalizeName(s: string): string {
   let t = s.toLowerCase().trim().replace(/[.!?]+$/, "").replace(/\s+/g, " ");

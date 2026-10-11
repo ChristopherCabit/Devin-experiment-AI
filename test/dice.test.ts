@@ -14,4 +14,8 @@ describe("resolveCheck", () => {
     expect(resolveCheck("extreme", 0, 3, fixed(20)).outcome).toBe("success");
     expect(resolveCheck("easy", 3, 3, fixed(1)).outcome).toBe("failure_with_complication");
   });
+
+  it("impossible attempts always fail, even on a natural 20", () => {
+    expect(resolveCheck("impossible", 10, 0, () => 0.99).outcome).toBe("failure");
+  });
 });

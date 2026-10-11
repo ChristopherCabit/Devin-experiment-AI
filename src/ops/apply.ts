@@ -412,7 +412,8 @@ export function applyOp(store: WorldStore, raw: unknown, ctx: ApplyContext): OpR
     return { ok: false, op: raw, reason: `invalid op: ${reason}` };
   }
   const op = parsed.data;
-  if (ctx.source === "narrator" && ENGINE_ONLY_OPS.has(op.op)) {
+  const narratorSpend = op.op === "resource_delta" && op.delta < 0 && op.resource !== "hp";
+  if (ctx.source === "narrator" && ENGINE_ONLY_OPS.has(op.op) && !narratorSpend) {
     return { ok: false, op, reason: `${op.op} is engine-only` };
   }
   if (ctx.source !== "author" && AUTHOR_ONLY_OPS.has(op.op)) {

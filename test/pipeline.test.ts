@@ -119,7 +119,42 @@ describe("travel", () => {
   });
 });
 
+describe("authority edge cases", () => {
+  it("a restrained protagonist can't walk away; the attempt becomes a risky check", async () => {
+    const parsed = JSON.stringify({ attempt: "tries to walk out", kind: "trivial", difficulty: "trivial", skill: null, opponent: null, framing: [], assumptions: [], dropped: [], destination: "the street", destination_scope: "elsewhere" });
+    const { store, log, calls, deps } = game([parsed, "<ops></ops>The rope holds."]);
+    log.commit({ kind: "author", input: "tie", source: "author", ops: [{ op: "relation", id: PLAYER_ID, add: [{ type: "restrained_by", target: "character:rook" }] }] });
+    await playTurn(deps, "do", "I walk out to the street");
+    expect(store.getEntity(PLAYER_ID)!.parent_id).toBe("room:common");
+    expect(calls[1]?.messages[1]?.content).toMatch(/restrained by Rook/);
+    expect(calls[1]?.messages[1]?.content).not.toMatch(/Outcome: success\b/);
+  });
+
+  it("the narrator may spend the player's resources but never grant them", () => {
+    const { store, log } = game([]);
+    const coin = () => charProps(store.getEntity(PLAYER_ID)!).sheet.resources.coin?.value;
+    const before = coin()!;
+    const { results } = log.commit({
+      kind: "do",
+      input: "buy bread",
+      source: "narrator",
+      ops: [
+        { op: "resource_delta", character: PLAYER_ID, resource: "coin", delta: -2 },
+        { op: "resource_delta", character: PLAYER_ID, resource: "coin", delta: 50 },
+        { op: "resource_delta", character: PLAYER_ID, resource: "hp", delta: -3 },
+      ],
+    });
+    expect(results.map((r) => r.ok)).toEqual([true, false, false]);
+    expect(coin()).toBe(before - 2);
+  });
+});
+
 describe("resolveIds", () => {
+  it("slugifies thought keys", () => {
+    const store = new WorldStore();
+    expect(resolveIds(store, { op: "thought", npc: "character:mara", key: "Feelings About You", text: "x" })).toMatchObject({ key: "feelings_about_you" });
+  });
+
   it("maps bare slugs and names to unique entity ids", () => {
     const store = new WorldStore();
     new TurnLog(store).commit({ kind: "author", input: "seed", ops: STARTER.ops, source: "author" });
