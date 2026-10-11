@@ -9,6 +9,7 @@ export interface TurnRecord {
   kind: TurnKind;
   source: OpSource;
   input: string;
+  output: string;
   ops: unknown[];
   results: { op: string; ok: boolean; reason?: string; note?: string }[];
   changes: Change[];
@@ -23,6 +24,7 @@ interface TurnRow {
   ops: string;
   results: string;
   changes: string;
+  output: string;
   created_at: number;
 }
 
@@ -32,6 +34,7 @@ function rowToRecord(row: TurnRow): TurnRecord {
     kind: row.kind as TurnKind,
     source: row.source as OpSource,
     input: row.input,
+    output: row.output,
     ops: JSON.parse(row.ops),
     results: JSON.parse(row.results),
     changes: JSON.parse(row.changes),
@@ -52,28 +55,46 @@ export class TurnLog {
     return n;
   }
 
+  /**
+   * Applies one or more op batches (e.g. engine outcome ops, then narrator ops)
+   * as a single undoable turn.
+   */
   commit(args: {
     kind: TurnKind;
     input: string;
-    ops: readonly unknown[];
-    source: OpSource;
+    output?: string;
+    ops?: readonly unknown[];
+    source?: OpSource;
+    batches?: readonly { source: OpSource; ops: readonly unknown[] }[];
     limits?: Partial<Limits>;
   }): { turn: number; results: OpResult[] } {
+    const batches = args.batches ?? [{ source: args.source ?? "engine", ops: args.ops ?? [] }];
+    const source = args.source ?? batches[batches.length - 1]?.source ?? "engine";
     const n = this.lastTurn() + 1;
     this.store.beginCapture();
     try {
       return this.store.transaction(() => {
-        const results = applyOps(this.store, args.ops, { source: args.source, turn: n, limits: args.limits });
+        const results = batches.flatMap((b) => applyOps(this.store, b.ops, { source: b.source, turn: n, limits: args.limits }));
         const changes = this.store.endCapture();
         const summary = results.map((r) =>
           r.ok ? { op: r.op.op, ok: true, ...(r.note ? { note: r.note } : {}) } : { op: opName(r.op), ok: false, reason: r.reason },
         );
         this.store.db
           .prepare(
-            `INSERT INTO turns (n, kind, source, input, ops, results, changes, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO turns (n, kind, source, input, ops, results, changes, output, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(n, args.kind, args.source, args.input, JSON.stringify(args.ops), JSON.stringify(summary), JSON.stringify(changes), Date.now());
+          .run(
+            n,
+            args.kind,
+            source,
+            args.input,
+            JSON.stringify(batches.flatMap((b) => b.ops)),
+            JSON.stringify(summary),
+            JSON.stringify(changes),
+            args.output ?? "",
+            Date.now(),
+          );
         return { turn: n, results };
       });
     } finally {

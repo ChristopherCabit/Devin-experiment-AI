@@ -11,6 +11,13 @@ export default tseslint.config(
     },
   },
   {
+    files: ["public/**/*.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { document: "readonly", window: "readonly", fetch: "readonly", Option: "readonly", confirm: "readonly", SimpleWebAuthnBrowser: "readonly" },
+    },
+  },
+  {
     files: ["test/**"],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS turns (
   ops TEXT NOT NULL,
   results TEXT NOT NULL,
   changes TEXT NOT NULL,
+  output TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 `;
