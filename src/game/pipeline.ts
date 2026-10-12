@@ -70,7 +70,7 @@ Rules:
 const OPS_HELP = `State changes: begin your reply with an <ops> block containing one JSON op per line, then the prose. Copy entity ids exactly as shown in [brackets], including the kind prefix (e.g. "character:<slug>", never the bare "<slug>"). Available ops:
 {"op":"move","id":ID,"to":ID,"zone":?str}  {"op":"set_zone","id":ID,"zone":str}  {"op":"set_posture","id":ID,"posture":str}
 {"op":"hold","character":ID,"item":ID}  {"op":"release","character":ID,"item":ID,"drop":bool}  {"op":"wear","character":ID,"item":ID}  {"op":"unwear","character":ID,"slot":str}  {"op":"give","from":ID,"to":ID,"item":ID}
-{"op":"create_entity","id":"kind:slug","kind":"item"|"container"|"character"|"room"|"place","name":str,"parent":ID,"zone":?str,"props":?obj}  (always give a new id so later ops in the same block can reference it; a new building is a "place" under the region, its rooms are "room"s under it)
+{"op":"create_entity","id":"kind:slug","kind":"item"|"container"|"character"|"room"|"place","name":str,"parent":ID,"zone":?str,"props":?obj}  (always give a new id so later ops in the same block can reference it; a new building is a "place" under the region, its rooms are "room"s under it; every new person or creature who speaks, acts or is named needs one, kind "character", the first time they appear)
   New characters MUST have props.age and props.sheet {"power_tier":int,"attributes":{"strength","agility","wits","charm"},"skills":{..},"resources":{"hp":{"value":n,"max":n}}}. ${STAT_SCALE} A crowd, squad or army is ONE character with props.group {"count":n} and a typical member's sheet.
   Items may have props.grants {stat: +1..+2} (helps while held/worn) or props.teaches {stat: tier} with "consumable":true (tome, potion). These are rare finds, never because the player asked for one.
 {"op":"update_character","id":ID,"description"|"appearance"|"traits"|"goals"|"backstory":?str,"aliases":?[str],"add_stats":?{"skills":{name:int}}}  (NPCs only; add_stats only for abilities newly revealed, existing stats can't change)
@@ -290,6 +290,63 @@ async function ensureOpponent(deps: GameDeps, s: WorldSettings, opponent: string
   return { id, tier: (k) => effectiveTier(store, draft, k) ?? 3, cost };
 }
 
+/** Capitalised mid-sentence words in the prose that match no entity: possible characters the narrator forgot to create. */
+export function untrackedNames(store: WorldStore, prose: string, ops: unknown[]): string[] {
+  const known = new Set<string>();
+  const add = (s: unknown) => {
+    if (typeof s === "string") for (const w of s.toLowerCase().split(/[^a-z]+/)) if (w) known.add(w);
+  };
+  for (const e of store.allEntities()) [e.name, ...e.aliases].forEach(add);
+  for (const o of ops) add((o as { name?: unknown }).name);
+  const out = new Set<string>();
+  for (const m of prose.matchAll(/[a-z,;:]\s+([A-Z][a-z]{2,})/g)) {
+    const w = m[1] ?? "";
+    if (!known.has(w.toLowerCase())) out.add(w);
+  }
+  return [...out].slice(0, 8);
+}
+
+const Untracked = z.object({
+  characters: z
+    .array(z.object({ name: z.string().min(1).max(80), description: z.string().max(400).catch(""), age: z.number().int().nullable().catch(null) }))
+    .max(4)
+    .catch([]),
+});
+
+/** Creates characters the narrator introduced in prose without a create_entity op, so they appear in the cast list and get stats. */
+async function trackUntracked(deps: GameDeps, s: WorldSettings, prose: string, ops: unknown[]): Promise<number> {
+  const { store, llm, playerId } = deps;
+  const names = untrackedNames(store, prose, ops);
+  if (!names.length) return 0;
+  const res = await llm.chat({
+    model: s.parserModel,
+    json: true,
+    maxTokens: 400,
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content:
+          'From the candidate words, pick those that name a person or creature physically present in this passage (not places, groups, deities, or people merely mentioned). Output JSON {"characters":[{"name":str,"description":"one line from the passage","age":int|null}]}, or {"characters":[]}.',
+      },
+      { role: "user", content: `Candidates: ${names.join(", ")}\n\nPassage:\n${prose}` },
+    ],
+  });
+  let found: z.output<typeof Untracked>["characters"] = [];
+  try {
+    found = Untracked.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim())).characters;
+  } catch {
+    /* treat as none */
+  }
+  const me = store.getEntity(playerId);
+  for (const c of found.filter((c) => names.includes(c.name))) {
+    const props: Record<string, unknown> = { description: c.description };
+    if (c.age !== null) props.age = c.age;
+    ops.push({ op: "create_entity", id: uniqueId(store, "character", c.name), kind: "character", name: c.name, parent: me?.parent_id ?? null, zone: me ? (charProps(me).scene.zone ?? undefined) : undefined, props });
+  }
+  return res.costUsd;
+}
+
 /** Narrator-created characters without stats get cast before the turn commits. */
 async function rateNewCharacters(deps: GameDeps, s: WorldSettings, ops: unknown[]): Promise<number> {
   let cost = 0;
@@ -474,6 +531,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   }
   const { ops: parsedOps, prose } = splitNarration(raw);
   const narratorOps = limitThoughts(parsedOps.map((op) => resolveIds(store, op)), budgets);
+  costUsd += await trackUntracked(deps, settings, prose, narratorOps);
   costUsd += await rateNewCharacters(deps, settings, narratorOps);
   if (spawning) {
     const g = await spawning;
