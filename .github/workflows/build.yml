@@ -52,9 +52,9 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - run: npm ci
-      - run: npx tauri android build --apk --debug --target aarch64 x86_64
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.3.11579264
+      - run: |
+          export NDK_HOME="$ANDROID_HOME/ndk/26.3.11579264"
+          npx tauri android build --apk --debug --target aarch64 x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: adventure-android
