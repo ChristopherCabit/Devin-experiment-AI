@@ -1,5 +1,6 @@
+import { z } from "zod";
 import type { TurnLog } from "../engine/turns.js";
-import { charProps, clockMinutes, itemProps, roomProps } from "../world/queries.js";
+import { charProps, clockMinutes, itemProps, roomProps, secrets } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
 
@@ -16,7 +17,27 @@ export interface WorldSettings {
   narratorModel: string;
   parserModel: string;
   contextTokens: number;
+  /** Highest tier anyone normally reaches; the player is capped here unless unboundedPower is on. */
+  powerCeiling: number;
+  /** Manual switch for godlike play; never set by narration. */
+  unboundedPower: boolean;
+  progression: Progression;
+  /** Scale for per-character inner-thought allowance: 0 off, 2 normal, 5 very introspective. */
+  thoughtsPerTurn: number;
 }
+
+export const Progression = z.object({
+  /** Skills improve with use. */
+  practice: z.boolean().default(true),
+  /** A present NPC with a higher skill can train the protagonist up to their own level. */
+  mentors: z.boolean().default(true),
+  /** A realm ladder advanced by cultivating and breakthrough checks. */
+  cultivation: z
+    .object({ realms: z.array(z.string().trim().min(1).max(60)).min(2).max(20), resource: z.string().trim().min(1).max(60).nullable().default(null) })
+    .nullable()
+    .default(null),
+});
+export type Progression = z.infer<typeof Progression>;
 
 export const DEFAULT_SETTINGS: WorldSettings = {
   title: "Untitled",
@@ -28,6 +49,10 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   narratorModel: "deepseek/deepseek-chat-v3-0324",
   parserModel: "deepseek/deepseek-chat-v3-0324",
   contextTokens: 32000,
+  powerCeiling: 6,
+  unboundedPower: false,
+  progression: { practice: true, mentors: true, cultivation: null },
+  thoughtsPerTurn: 2,
 };
 
 export function getSettings(store: WorldStore): WorldSettings {
@@ -123,6 +148,8 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
   for (const c of present) lines.push("", ...characterBlock(store, c, false));
   const facts = store.facts().slice(-30);
   if (facts.length) lines.push("", "Established facts:", ...facts.map((f) => `- ${f.text}`));
+  const known = secrets(store).filter((x) => x.revealed);
+  if (known.length) lines.push("", "Secrets the protagonist has uncovered:", ...known.map((x) => `- ${x.text}`));
   return { text: lines.join("\n"), present };
 }
 
@@ -131,7 +158,7 @@ export function recentStory(log: TurnLog, budgetTokens: number): string {
   const parts: string[] = [];
   let used = 0;
   for (const t of log.history(200).reverse()) {
-    if (t.kind === "author" || t.kind === "system") continue;
+    if (t.kind === "author" || (t.kind === "system" && !t.output)) continue;
     const block = [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
     used += approxTokens(block);
     if (used > budgetTokens) break;

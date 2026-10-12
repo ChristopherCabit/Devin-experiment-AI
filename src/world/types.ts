@@ -66,6 +66,8 @@ export const Sheet = z.object({
   abilities: z.record(z.string(), Tier).default({}),
   power_tier: Tier.default(1),
   resources: z.record(z.string(), Resource).default({}),
+  /** Practice toward the next tier, per attribute/skill/ability. */
+  progress: z.record(z.string(), z.number()).default({}),
 });
 export type Sheet = z.infer<typeof Sheet>;
 
@@ -76,6 +78,8 @@ export const CharacterProps = z
     scene: SceneState.default({}),
     mind: Mind.default({}),
     sheet: Sheet.default({}),
+    /** Set when this entity stands for several identical individuals (a squad, a gang, an army). */
+    group: z.object({ count: z.number().int().min(0) }).nullable().default(null),
   })
   .passthrough();
 export type CharacterProps = z.infer<typeof CharacterProps>;
@@ -103,6 +107,11 @@ export const ItemProps = z
     fixed: z.boolean().optional(),
     /** Zone within the room where a loose item lies. */
     zone: z.string().nullable().optional(),
+    /** Bonus to these stats while held or worn. */
+    grants: z.record(z.string(), z.number().int().min(-3).max(3)).optional(),
+    /** Stats raised to at least these tiers when the item is used up (tome, potion). */
+    teaches: z.record(z.string(), Tier).optional(),
+    consumable: z.boolean().optional(),
   })
   .passthrough();
 export type ItemProps = z.infer<typeof ItemProps>;
@@ -125,3 +134,20 @@ export const Fact = z.object({
   turn: z.number().int().nonnegative(),
 });
 export type Fact = z.infer<typeof Fact>;
+
+export const SECRET_KINDS = ["boon", "danger", "horror", "twist"] as const;
+export const URGENCIES = ["dormant", "stirring", "active"] as const;
+/** Hidden truth the protagonist hasn't learned. Scoped to its subjects (none = the whole world). */
+export const Secret = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(2000),
+  kind: z.enum(SECRET_KINDS).catch("twist"),
+  subjects: z.array(EntityId).default([]),
+  known_by: z.array(EntityId).default([]),
+  urgency: z.enum(URGENCIES).catch("dormant"),
+  revealed: z.boolean().default(false),
+  revealed_turn: z.number().int().nullable().default(null),
+  hinted_turn: z.number().int().nullable().default(null),
+  created_turn: z.number().int().default(0),
+});
+export type Secret = z.infer<typeof Secret>;

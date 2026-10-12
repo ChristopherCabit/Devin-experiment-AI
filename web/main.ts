@@ -1,6 +1,8 @@
 import { Game, type GameState } from "../src/app/game.js";
 import { initSqlite } from "../src/db/sqlite.js";
 import type { PlayKind, TurnOutput } from "../src/game/pipeline.js";
+import { ATTRIBUTES, playerCap, pointBudget, pointCost } from "../src/game/rules.js";
+import type { WorldDraft } from "../src/game/setup.js";
 import type { Entity } from "../src/world/types.js";
 import { detectPlatform } from "./platform.js";
 
@@ -101,14 +103,14 @@ $("btn-retry").onclick = async () => {
 };
 
 // ---------- tabs ----------
-for (const b of document.querySelectorAll<HTMLButtonElement>("nav button")) {
-  b.onclick = () => {
-    for (const x of document.querySelectorAll("nav button")) x.classList.toggle("active", x === b);
-    for (const t of document.querySelectorAll<HTMLElement>(".tab")) t.hidden = t.id !== `tab-${b.dataset.tab}`;
-    if (b.dataset.tab === "cast") loadEntities();
-    if (b.dataset.tab === "world") loadSettings();
-  };
+function showTab(tab: string) {
+  for (const x of document.querySelectorAll<HTMLButtonElement>("nav button")) x.classList.toggle("active", x.dataset.tab === tab);
+  for (const t of document.querySelectorAll<HTMLElement>(".tab")) t.hidden = t.id !== `tab-${tab}`;
+  if (tab === "cast") loadEntities();
+  if (tab === "world") loadSettings();
+  if (tab === "new") updatePoints();
 }
+for (const b of document.querySelectorAll<HTMLButtonElement>("nav button")) b.onclick = () => showTab(b.dataset.tab ?? "play");
 
 // ---------- author mode ----------
 let entities: Entity[] = [];
@@ -119,6 +121,7 @@ function loadEntities(selectId?: string) {
   sel.replaceChildren(...entities.filter((e) => e.kind !== "region").map((e) => new Option(`${e.name} (${e.id})`, e.id)));
   if (keep) sel.value = keep;
   showEntity();
+  renderSecrets();
 }
 function showEntity() {
   const e = entities.find((x) => x.id === $<HTMLSelectElement>("entity-select").value);
@@ -128,6 +131,23 @@ function showEntity() {
   $<HTMLTextAreaElement>("entity-props").value = JSON.stringify(e.props, null, 2);
 }
 $("entity-select").onchange = showEntity;
+function renderSecrets() {
+  const all = game.secrets();
+  const spoil = $("show-spoilers").checked;
+  const box = $("secrets-list");
+  box.replaceChildren();
+  const shown = spoil ? all : all.filter((s) => s.revealed);
+  for (const s of shown) {
+    const p = document.createElement("p");
+    const about = s.subjects.map((id) => entities.find((e) => e.id === id)?.name ?? id).join(", ") || "the world";
+    p.textContent = `${s.revealed ? "✓" : "?"} [${s.kind}${s.urgency !== "dormant" ? `, ${s.urgency}` : ""}] ${about}: ${s.text}`;
+    box.append(p);
+  }
+  const hidden = all.length - shown.length;
+  if (hidden) box.append(`${hidden} hidden secret${hidden === 1 ? "" : "s"}.`);
+  if (!all.length) box.textContent = "None yet.";
+}
+$("show-spoilers").onchange = renderSecrets;
 $("btn-entity-save").onclick = async () => {
   try {
     const props = JSON.parse($<HTMLTextAreaElement>("entity-props").value);
@@ -154,11 +174,16 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "narratorModel", "parserModel", "contextTokens"] as const;
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
+const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;
-  for (const k of SETTINGS) $(`s-${k}`).value = String(s[k]);
+  for (const k of SETTINGS) {
+    if (k === "unboundedPower") $(`s-${k}`).checked = Boolean(s[k]);
+    else $(`s-${k}`).value = String(s[k]);
+  }
+  progressionTo("s-prog", game.settings().progression);
   const c = game.config();
   $("cfg-key").value = "";
   $("cfg-key").placeholder = c.hasKey ? "Key saved on this device (enter a new one to replace)" : "sk-or-…";
@@ -167,7 +192,9 @@ function loadSettings() {
 }
 $("btn-settings-save").onclick = async () => {
   const body: Record<string, unknown> = {};
-  for (const k of SETTINGS) body[k] = k === "contextTokens" ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
+  for (const k of SETTINGS) body[k] = k === "unboundedPower" ? $(`s-${k}`).checked : NUMERIC.has(k) ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
+  body.progression = progressionFrom("s-prog");
+  if (body.unboundedPower && !game.settings().unboundedPower && !confirm("Turn on unbounded power? Your character's stats will no longer be capped.")) return;
   try {
     await game.updateSettings(body);
     say("Saved.");
@@ -240,13 +267,155 @@ function loadSaves() {
     box.append(row);
   }
 }
-$("btn-save-new").onclick = async () => {
+$("btn-save-new").onclick = () => showTab("new");
+
+// ---------- new adventure ----------
+let draft: WorldDraft | null = null;
+const nsay = (m: string) => ($("n-msg").textContent = m);
+const parseStats = (t: string): Record<string, number> =>
+  Object.fromEntries(
+    t.split(",").map((x) => x.trim()).filter(Boolean).map((x) => {
+      const m = /^(.*?)\s+(\d+)$/.exec(x);
+      return m ? [(m[1] ?? x).toLowerCase(), Number(m[2])] : [x.toLowerCase(), 1];
+    }),
+  );
+const fmtStats = (o: Record<string, number>) => Object.entries(o).map(([k, v]) => `${k} ${v}`).join(", ");
+const statsMode = () => (document.querySelector('input[name="statsMode"]:checked') as HTMLInputElement).value;
+function progressionFrom(pre: string) {
+  const realms = $<HTMLTextAreaElement>(`${pre}-realms`).value.split("\n").map((x) => x.trim()).filter(Boolean);
+  return {
+    practice: $(`${pre}-practice`).checked,
+    mentors: $(`${pre}-mentors`).checked,
+    cultivation: realms.length >= 2 ? { realms, resource: $(`${pre}-resource`).value.trim() || null } : null,
+  };
+}
+function progressionTo(pre: string, p: ReturnType<typeof progressionFrom>) {
+  $(`${pre}-practice`).checked = p.practice;
+  $(`${pre}-mentors`).checked = p.mentors;
+  $<HTMLTextAreaElement>(`${pre}-realms`).value = p.cultivation?.realms.join("\n") ?? "";
+  $(`${pre}-resource`).value = p.cultivation?.resource ?? "";
+}
+function brief() {
+  return {
+    progression: progressionFrom("n-prog"),
+    title: $("n-title").value.trim() || "Untitled",
+    premise: $<HTMLTextAreaElement>("n-premise").value,
+    situation: $<HTMLTextAreaElement>("n-situation").value,
+    intensity: $("n-intensity").value,
+    limits: $("n-limits").value,
+    deathPolicy: $("n-deathPolicy").value,
+    powerCeiling: Math.min(10, Math.max(1, Number($("n-power").value) || 6)),
+    unboundedPower: $("n-unbounded").checked,
+  };
+}
+function playerStats() {
+  return {
+    attributes: Object.fromEntries(ATTRIBUTES.map((a) => [a, Number($(`n-a-${a}`).value) || 0])),
+    skills: parseStats($("n-skills").value),
+    abilities: parseStats($("n-abilities").value),
+  };
+}
+function updatePoints() {
+  const b = brief(), st = playerStats(), cost = pointCost(st), budget = pointBudget(b.powerCeiling);
+  const free = statsMode() === "freeform" || b.unboundedPower;
+  $("n-points").textContent = `Points: ${cost}${free ? "" : ` of ${budget}`} · max ${playerCap(b)} per stat${b.unboundedPower ? " (unbounded)" : ""}`;
+  $("n-points").classList.toggle("bad", !free && cost > budget);
+}
+$("tab-new").addEventListener("input", updatePoints);
+$("n-template").onchange = () => ($("n-custom").hidden = $<HTMLSelectElement>("n-template").value === "starter");
+$("n-unbounded").onchange = () => {
+  if ($("n-unbounded").checked && !confirm("Unbounded power removes the stat cap and point budget for your character. Turn it on?")) $("n-unbounded").checked = false;
+  updatePoints();
+};
+function showDraft(d: WorldDraft) {
+  draft = d;
+  $("n-draft").hidden = false;
+  $<HTMLTextAreaElement>("n-opening").value = d.opening;
+  const places = [`${d.start.place} / ${d.start.room} (start)`, ...d.places.map((p) => `${p.name}${p.rooms.length ? ` (${p.rooms.map((r) => r.name).join(", ")})` : ""}`)];
+  $("n-places").textContent = `Locations: ${places.join("; ")}` + (d.secrets.length ? ` · ${d.secrets.length} secrets generated (hidden; see Edit → Show spoilers after starting)` : "");
+  if (d.cultivation && !$<HTMLTextAreaElement>("n-prog-realms").value.trim()) progressionTo("n-prog", { ...progressionFrom("n-prog"), cultivation: d.cultivation });
+  const list = $("n-npc-list");
+  list.replaceChildren();
+  if (!d.npcs.length) list.textContent = "No NPCs: you start alone.";
+  d.npcs.forEach((n, i) => {
+    const row = document.createElement("label");
+    row.className = "npc";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = true;
+    cb.dataset.i = String(i);
+    const t = document.createElement("span");
+    const stats = fmtStats({ power: n.sheet.power_tier, ...n.sheet.skills });
+    t.textContent = `${n.name}${n.count ? ` ×${n.count}` : ""}${n.age ? `, ${n.age}` : ""} — ${n.description} [${stats}]`;
+    row.append(cb, t);
+    list.append(row);
+  });
+}
+async function draftWorld(mode: "generate" | "blank") {
+  nsay(mode === "generate" ? "Generating…" : "");
   try {
-    render(await game.newSave($("save-name").value.trim() || "New adventure"));
-    loadSettings();
-    say("New adventure started.");
+    showDraft(await game.draftWorld({ brief: brief(), mode, npcs: $("n-npcs").checked, place: $("n-place").value.trim() || undefined, room: $("n-room").value.trim() || undefined }));
+    nsay(mode === "generate" ? "Edit the opening or untick NPCs, then Start. Everything can be edited later in the Edit tab." : "");
   } catch (e) {
-    say(errText(e));
+    nsay(errText(e));
+  }
+}
+$("btn-n-generate").onclick = () => draftWorld("generate");
+$("btn-n-blank").onclick = () => draftWorld("blank");
+$("btn-n-propose").onclick = async () => {
+  const description = $<HTMLTextAreaElement>("n-desc").value.trim();
+  if (!description) return nsay("Write a description first.");
+  nsay("Proposing…");
+  try {
+    const st = await game.proposeStats({ description, brief: brief() });
+    for (const a of ATTRIBUTES) $(`n-a-${a}`).value = String(st.attributes[a] ?? 0);
+    const extra = Object.fromEntries(Object.entries(st.attributes).filter(([k]) => !(ATTRIBUTES as readonly string[]).includes(k)));
+    $("n-skills").value = fmtStats({ ...extra, ...st.skills });
+    $("n-abilities").value = fmtStats(st.abilities);
+    $("n-hp").value = String(st.hp);
+    (document.querySelector('input[name="statsMode"][value="proposed"]') as HTMLInputElement).checked = true;
+    updatePoints();
+    nsay("Adjust as you like, then Start.");
+  } catch (e) {
+    nsay(errText(e));
+  }
+};
+$("btn-n-cancel").onclick = () => showTab("world");
+$("btn-n-start").onclick = async () => {
+  const name = $("n-name").value.trim() || "New adventure";
+  try {
+    if ($<HTMLSelectElement>("n-template").value === "starter") {
+      render(await game.newSave(name));
+    } else {
+      const b = brief();
+      const d = draft ?? (await game.draftWorld({ brief: b, mode: "blank", place: $("n-place").value.trim() || undefined, room: $("n-room").value.trim() || undefined }));
+      const keep = new Set([...document.querySelectorAll<HTMLInputElement>("#n-npc-list input:checked")].map((c) => Number(c.dataset.i)));
+      const world = { ...d, opening: $<HTMLTextAreaElement>("n-opening").value.trim() || d.opening, npcs: draft ? d.npcs.filter((_, i) => keep.has(i)) : [] };
+      const st = playerStats();
+      render(
+        await game.createAdventure({
+          name,
+          brief: b,
+          world,
+          statsMode: statsMode(),
+          player: {
+            name: $("n-pname").value.trim() || "You",
+            age: Number($("n-age").value),
+            description: $<HTMLTextAreaElement>("n-desc").value,
+            ...st,
+            hp: Number($("n-hp").value) || 10,
+            coin: Number($("n-coin").value) || 0,
+            items: $("n-items").value.split(",").map((x) => x.trim()).filter(Boolean),
+          },
+        }),
+      );
+    }
+    draft = null;
+    $("n-draft").hidden = true;
+    nsay("");
+    showTab("play");
+  } catch (e) {
+    nsay(errText(e));
   }
 };
 $("btn-save-dup").onclick = async () => {

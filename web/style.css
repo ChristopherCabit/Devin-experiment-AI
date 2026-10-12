@@ -37,3 +37,10 @@ nav button.active { border-color: var(--accent); }
 .save { border: 1px solid #333842; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
 .save.active { border-color: var(--accent); }
 label.button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #333842; border-radius: 8px; padding: 8px 10px; background: var(--panel); cursor: pointer; }
+
+label.check { display: flex; gap: 0.5em; align-items: center; }
+label.check input { width: auto; }
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(7em, 1fr)); gap: 0.5em; }
+.npc { display: flex; gap: 0.5em; align-items: flex-start; margin: 0.3em 0; }
+.npc input { width: auto; margin-top: 0.3em; }
+.msg.bad { color: #e07070; }
