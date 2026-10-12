@@ -21,3 +21,8 @@ tauri-build = { version = "2.7.2", features = [] }
 tauri = { version = "2.12.3", features = [] }
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
+
+# Keeps debug APKs small enough to sideload.
+[profile.dev]
+debug = false
+strip = "symbols"
