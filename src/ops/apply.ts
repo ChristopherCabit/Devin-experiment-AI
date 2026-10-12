@@ -279,6 +279,15 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       return {};
     }
 
+    case "rename": {
+      const e = need(store, op.id);
+      if (ctx.source === "narrator" && (e.props as { is_player?: unknown }).is_player) fail("the narrator cannot rename the player character");
+      if (e.name.toLowerCase() === op.name.toLowerCase()) fail(`${op.id} is already named ${op.name}`);
+      const aliases = [...new Set([...e.aliases, e.name])].filter((a) => a.toLowerCase() !== op.name.toLowerCase());
+      store.putEntity({ ...e, name: op.name, aliases });
+      return {};
+    }
+
     case "secret": {
       for (const id of [...op.subjects, ...op.known_by]) need(store, id);
       const list = secrets(store);

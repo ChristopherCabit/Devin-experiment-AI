@@ -174,8 +174,8 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
-const NUMERIC = new Set<string>(["contextTokens", "powerCeiling"]);
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
+const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;

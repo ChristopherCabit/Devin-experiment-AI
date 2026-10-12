@@ -22,6 +22,8 @@ export interface WorldSettings {
   /** Manual switch for godlike play; never set by narration. */
   unboundedPower: boolean;
   progression: Progression;
+  /** Max inner-thought ops per major character per turn; minor characters get about half. */
+  thoughtsPerTurn: number;
 }
 
 export const Progression = z.object({
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   powerCeiling: 6,
   unboundedPower: false,
   progression: { practice: true, mentors: true, cultivation: null },
+  thoughtsPerTurn: 2,
 };
 
 export function getSettings(store: WorldStore): WorldSettings {
@@ -155,7 +158,7 @@ export function recentStory(log: TurnLog, budgetTokens: number): string {
   const parts: string[] = [];
   let used = 0;
   for (const t of log.history(200).reverse()) {
-    if (t.kind === "author" || t.kind === "system") continue;
+    if (t.kind === "author" || (t.kind === "system" && !t.output)) continue;
     const block = [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
     used += approxTokens(block);
     if (used > budgetTokens) break;

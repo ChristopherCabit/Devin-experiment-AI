@@ -46,6 +46,7 @@ const SettingsBody = z
     parserModel: z.string().min(1).max(120),
     contextTokens: z.number().int().min(4000).max(128000),
     powerCeiling: z.number().int().min(1).max(10),
+    thoughtsPerTurn: z.number().int().min(0).max(5),
     unboundedPower: z.boolean(),
     progression: Progression,
   })

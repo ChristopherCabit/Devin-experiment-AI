@@ -159,7 +159,7 @@ export function buildSeed(spec: z.infer<typeof AdventureSpec>): Seed {
       kind: "character",
       name: n.name,
       parent: rooms.get((n.room ?? "").toLowerCase()) ?? startRoom,
-      props: { age: n.age, description: n.description, traits: n.traits, goals: n.goals, sheet: n.sheet, group: n.count ? { count: n.count } : null },
+      props: { age: n.age, description: n.description, traits: n.traits, goals: n.goals, sheet: n.sheet, group: n.count ? { count: n.count } : null, prominence: n.count ? "background" : "major" },
     });
   }
   const ref = (xs: string[]) => [...new Set(xs.map((x) => named.get(x.toLowerCase())).filter((x): x is string => !!x))];

@@ -63,6 +63,7 @@ export const Op = z.discriminatedUnion("op", [
     .strict(),
   z.object({ op: z.literal("practice"), character: EntityId, key: Name, value: z.number().min(0) }).strict(),
   z.object({ op: z.literal("remove_entity"), id: EntityId }).strict(),
+  z.object({ op: z.literal("rename"), id: EntityId, name: Name }).strict(),
   z
     .object({
       op: z.literal("secret"),
