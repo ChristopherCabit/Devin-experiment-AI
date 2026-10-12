@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Db, type Statement } from "../db/sqlite.js";
 import { Entity, Fact, type EntityKind } from "./types.js";
 
 export type Table = "entities" | "facts" | "meta";
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS turns (
 
 /** Save-format version. To change the format, append a migration; never edit an existing one. Migrations only add. */
 export const SCHEMA_VERSION = 1;
-const MIGRATIONS: ((db: Database.Database) => void)[] = [(db) => db.exec(SCHEMA)];
+const MIGRATIONS: ((db: Db) => void)[] = [(db) => db.exec(SCHEMA)];
 
 function rowToEntity(row: EntityRow): Entity {
   return Entity.parse({
@@ -92,19 +92,27 @@ function rowToFact(row: FactRow): Fact {
 }
 
 export class WorldStore {
-  readonly db: Database.Database;
+  readonly db: Db;
   private capture: Map<string, Change> | null = null;
-  private readonly stmts = new Map<string, Database.Statement>();
 
-  constructor(filename = ":memory:") {
-    this.db = new Database(filename);
-    this.db.pragma("journal_mode = WAL");
-    const version = this.db.pragma("user_version", { simple: true }) as number;
-    if (version > SCHEMA_VERSION) throw new Error(`save format v${version} is newer than this app (v${SCHEMA_VERSION})`);
-    this.db.transaction(() => {
-      for (let v = version; v < SCHEMA_VERSION; v++) MIGRATIONS[v]?.(this.db);
-      this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
-    })();
+  /** Opens a save from its file bytes, or a new empty one, upgrading its format if needed. */
+  constructor(bytes?: Uint8Array) {
+    this.db = Db.open(bytes);
+    try {
+      const version = this.db.pragma("user_version");
+      if (version > SCHEMA_VERSION) throw new Error(`save format v${version} is newer than this app (v${SCHEMA_VERSION})`);
+      this.db.transaction(() => {
+        for (let v = version; v < SCHEMA_VERSION; v++) MIGRATIONS[v]?.(this.db);
+        this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      });
+    } catch (e) {
+      this.db.close();
+      throw e;
+    }
+  }
+
+  serialize(): Uint8Array {
+    return this.db.serialize();
   }
 
   close(): void {
@@ -113,20 +121,15 @@ export class WorldStore {
 
   /** Runs `fn` atomically. Nested calls become savepoints. */
   transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    return this.db.transaction(fn);
   }
 
-  private stmt(sql: string): Database.Statement {
-    let s = this.stmts.get(sql);
-    if (!s) {
-      s = this.db.prepare(sql);
-      this.stmts.set(sql, s);
-    }
-    return s;
+  private stmt(sql: string): Statement {
+    return this.db.prepare(sql);
   }
 
   getEntity(id: string): Entity | null {
-    const row = this.stmt("SELECT * FROM entities WHERE id = ?").get(id) as EntityRow | undefined;
+    const row = this.stmt("SELECT * FROM entities WHERE id = ?").get(id) as unknown as EntityRow | undefined;
     return row ? rowToEntity(row) : null;
   }
 
@@ -142,22 +145,22 @@ export class WorldStore {
   }
 
   children(parentId: string): Entity[] {
-    const rows = this.stmt("SELECT * FROM entities WHERE parent_id = ? ORDER BY id").all(parentId) as EntityRow[];
+    const rows = this.stmt("SELECT * FROM entities WHERE parent_id = ? ORDER BY id").all(parentId) as unknown as EntityRow[];
     return rows.map(rowToEntity);
   }
 
   entitiesOfKind(kind: EntityKind): Entity[] {
-    const rows = this.stmt("SELECT * FROM entities WHERE kind = ? ORDER BY id").all(kind) as EntityRow[];
+    const rows = this.stmt("SELECT * FROM entities WHERE kind = ? ORDER BY id").all(kind) as unknown as EntityRow[];
     return rows.map(rowToEntity);
   }
 
   allEntities(): Entity[] {
-    const rows = this.stmt("SELECT * FROM entities ORDER BY id").all() as EntityRow[];
+    const rows = this.stmt("SELECT * FROM entities ORDER BY id").all() as unknown as EntityRow[];
     return rows.map(rowToEntity);
   }
 
   addFact(text: string, subjects: string[], turn: number): number {
-    const { next } = this.stmt("SELECT coalesce(max(id), 0) + 1 AS next FROM facts").get() as { next: number };
+    const { next } = this.stmt("SELECT coalesce(max(id), 0) + 1 AS next FROM facts").get() as unknown as { next: number };
     this.touch("facts", String(next));
     this.stmt("INSERT INTO facts (id, text, subjects, turn) VALUES (?, ?, ?, ?)").run(
       next,
@@ -169,12 +172,12 @@ export class WorldStore {
   }
 
   facts(): Fact[] {
-    const rows = this.stmt("SELECT * FROM facts ORDER BY id").all() as FactRow[];
+    const rows = this.stmt("SELECT * FROM facts ORDER BY id").all() as unknown as FactRow[];
     return rows.map(rowToFact);
   }
 
   getMeta<T>(key: string, fallback: T): T {
-    const row = this.stmt("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+    const row = this.stmt("SELECT value FROM meta WHERE key = ?").get(key) as unknown as { value: string } | undefined;
     return row ? (JSON.parse(row.value) as T) : fallback;
   }
 

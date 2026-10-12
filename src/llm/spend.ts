@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Db } from "../db/sqlite.js";
 
 /**
  * Monthly spend ledger. Kept outside the turn-diff tables so undo never
@@ -6,8 +6,8 @@ import type Database from "better-sqlite3";
  */
 export class SpendMeter {
   constructor(
-    private readonly db: Database.Database,
-    readonly capUsd: number,
+    private readonly db: Db,
+    public capUsd: number,
     private readonly now: () => Date = () => new Date(),
   ) {
     db.exec("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL NOT NULL, calls INTEGER NOT NULL)");
@@ -18,7 +18,7 @@ export class SpendMeter {
   }
 
   spentThisMonth(): number {
-    const row = this.db.prepare("SELECT usd FROM spend WHERE month = ?").get(this.month()) as { usd: number } | undefined;
+    const row = this.db.prepare("SELECT usd FROM spend WHERE month = ?").get(this.month()) as unknown as { usd: number } | undefined;
     return row?.usd ?? 0;
   }
 

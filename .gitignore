@@ -4,3 +4,5 @@ dist/
 *.db-journal
 .env
 !test/fixtures/*.db
+dist-web/
+src-tauri/target/
