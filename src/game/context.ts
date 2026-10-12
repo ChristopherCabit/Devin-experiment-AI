@@ -22,7 +22,7 @@ export interface WorldSettings {
   /** Manual switch for godlike play; never set by narration. */
   unboundedPower: boolean;
   progression: Progression;
-  /** Max inner-thought ops per major character per turn; minor characters get about half. */
+  /** Scale for per-character inner-thought allowance: 0 off, 2 normal, 5 very introspective. */
   thoughtsPerTurn: number;
 }
 

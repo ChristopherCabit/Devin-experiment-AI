@@ -155,17 +155,35 @@ export function resolveIds(store: WorldStore, op: unknown): unknown {
 
 type Budget = { id: string; name: string; max: number };
 
-/** Inner-thought allowance per present character: full for whoever the player engages or major characters, less for minor ones, at most one for crowds. */
+const DEEP = /schem|calculat|anxious|paranoid|brood|cunning|strateg|introspect|neurotic|manipul|obsess|clever|brilliant|curious|scholar/i;
+const SHALLOW = /impulsive|simple|dim[- ]?witted|reckless|feral|mindless|carefree|thoughtless|brutish/i;
+
+/** 0-5 inner-monologue level: the character's own "thoughtfulness" if set, else from mental stats and personality. */
+export function thoughtfulness(e: Entity): number {
+  const p = e.props as { thoughtfulness?: unknown; traits?: unknown; description?: unknown; sheet?: { attributes?: Record<string, unknown> } };
+  if (typeof p.thoughtfulness === "number") return Math.max(0, Math.min(5, Math.round(p.thoughtfulness)));
+  const minds = Object.entries(p.sheet?.attributes ?? {})
+    .filter(([k, v]) => typeof v === "number" && /wit|intel|cunning|wis|mind|insight|percep|lore/i.test(k))
+    .map(([, v]) => v as number);
+  let t = minds.length ? 1 + Math.max(...minds) / 3 : 2;
+  const persona = `${String(p.traits ?? "")} ${String(p.description ?? "")}`;
+  if (DEEP.test(persona)) t += 1;
+  if (SHALLOW.test(persona)) t -= 1;
+  return Math.max(0, Math.min(5, Math.round(t)));
+}
+
+/** Inner-thought allowance per present character: their thoughtfulness scaled by the world setting (2 = normal), +1 for whoever the player engages; crowds get at most one. */
 export function thoughtBudgets(present: Entity[], s: WorldSettings, input: string): Budget[] {
-  const n = s.thoughtsPerTurn;
+  const scale = s.thoughtsPerTurn / 2;
   const text = input.toLowerCase();
   return present
     .filter((e) => e.kind === "character")
     .map((e) => {
       const p = e.props as { prominence?: unknown; group?: unknown };
       const engaged = [e.name, ...e.aliases].some((a) => a.length > 2 && text.includes(a.toLowerCase()));
-      const role = engaged || p.prominence === "major" ? "major" : p.group || p.prominence === "background" ? "background" : "minor";
-      return { id: e.id, name: e.name, max: role === "major" ? n : role === "minor" ? Math.ceil(n / 2) : Math.min(1, n) };
+      let max = scale ? Math.round(thoughtfulness(e) * scale) + (engaged || p.prominence === "major" ? 1 : 0) : 0;
+      if (p.group || p.prominence === "background") max = Math.min(1, max);
+      return { id: e.id, name: e.name, max: Math.min(8, max) };
     });
 }
 
@@ -283,7 +301,7 @@ async function ensureOpponent(deps: GameDeps, s: WorldSettings, opponent: string
     const me = store.getEntity(playerId);
     const name = titleCase(opponent.replace(/^(?:the|a|an|some)\s+|\b(?:nearest|closest|other)\s+/gi, "")).slice(0, 80) || "Stranger";
     id = uniqueId(store, "character", name);
-    const props = { age: cast.age, description: opponent, sheet, group: cast.count && cast.count > 1 ? { count: cast.count } : null };
+    const props = { age: cast.age, description: opponent, sheet, group: cast.count && cast.count > 1 ? { count: cast.count } : null, thoughtfulness: cast.thoughtfulness ?? undefined };
     engineOps.push({ op: "create_entity", id, kind: "character", name, parent: me?.parent_id ?? null, zone: me ? (charProps(me).scene.zone ?? undefined) : undefined, props });
     draft = { id, kind: "character", name, aliases: [], parent_id: me?.parent_id ?? null, props, created_turn: 0 };
   }
@@ -363,6 +381,7 @@ async function rateNewCharacters(deps: GameDeps, s: WorldSettings, ops: unknown[
       props.sheet = castToSheet(r.cast);
       props.age ??= r.cast.age;
       if (r.cast.count && r.cast.count > 1) props.group ??= { count: r.cast.count };
+      if (r.cast.thoughtfulness !== null) props.thoughtfulness ??= r.cast.thoughtfulness;
     }),
   );
   return cost;

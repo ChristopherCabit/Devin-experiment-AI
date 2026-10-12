@@ -31,18 +31,22 @@ describe("narration fixes", () => {
     expect(applyOp(store, { op: "rename", id: PLAYER_ID, name: "Bob" }, narrator).ok).toBe(false);
   });
 
-  it("thought budgets favour engaged and major characters and are enforced", () => {
+  it("thought budgets are per character: mind, personality, override, engagement and crowds", () => {
     const { store } = world();
-    const rook = store.getEntity("character:rook")!;
-    const mara = store.getEntity("character:mara")!;
-    const crowd = { ...mara, id: "character:crowd", name: "Drinkers", aliases: [], props: { ...mara.props, group: { count: 6 } } };
-    const s = { ...DEFAULT_SETTINGS, thoughtsPerTurn: 4 };
-    const b = thoughtBudgets([rook, mara, crowd], s, "I ask Rook about the ledger");
-    expect(b.map((x) => x.max)).toEqual([4, 2, 1]);
+    const base = store.getEntity("character:mara")!;
+    const mk = (id: string, name: string, props: Record<string, unknown>) => ({ ...base, id, name, aliases: [], props: { ...base.props, traits: "", description: "", ...props } });
+    const schemer = mk("character:a", "Vesper", { traits: "scheming, patient", sheet: { ...base.props.sheet as object, attributes: { wits: 9 } } });
+    const brute = mk("character:b", "Oxley", { traits: "impulsive brawler", sheet: { ...base.props.sheet as object, attributes: { wits: 2 } } });
+    const set = mk("character:c", "Quill", { thoughtfulness: 1 });
+    const crowd = mk("character:d", "Drinkers", { group: { count: 6 } });
+    const s = { ...DEFAULT_SETTINGS, thoughtsPerTurn: 2 };
+    expect(thoughtBudgets([schemer, brute, set, crowd], s, "").map((x) => x.max)).toEqual([5, 1, 1, 1]);
+    expect(thoughtBudgets([brute], s, "I shove Oxley")[0]?.max).toBe(2);
+    expect(thoughtBudgets([schemer], { ...s, thoughtsPerTurn: 4 }, "")[0]?.max).toBe(8);
+    expect(thoughtBudgets([schemer], { ...s, thoughtsPerTurn: 0 }, "I ask Vesper")[0]?.max).toBe(0);
     const t = (npc: string, key: string) => ({ op: "thought", npc, key, text: "hm" });
-    const kept = limitThoughts([t("character:mara", "a"), t("character:mara", "b"), t("character:mara", "c"), { op: "emotion", npc: "character:mara", set: [] }], b);
-    expect(kept).toHaveLength(3);
-    expect(thoughtBudgets([mara], { ...s, thoughtsPerTurn: 0 }, "").map((x) => x.max)).toEqual([0]);
+    const kept = limitThoughts([t("character:b", "a"), t("character:b", "b"), { op: "emotion", npc: "character:b", set: [] }], thoughtBudgets([brute], s, ""));
+    expect(kept).toHaveLength(2);
   });
 
   it("finds named characters the narrator mentioned but never created", () => {

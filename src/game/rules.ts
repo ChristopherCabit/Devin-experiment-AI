@@ -189,14 +189,15 @@ const Cast = z.object({
   abilities: z.record(z.string(), z.number().int().min(0).max(10)).catch({}),
   hp: z.number().int().min(1).max(1000).catch(10),
   count: z.number().int().min(1).max(100000).nullable().catch(null),
+  thoughtfulness: z.number().int().min(0).max(5).nullable().catch(null),
 });
 export type Cast = z.infer<typeof Cast>;
 
 const SCALE = "Scale 0-10: 1 feeble, 3 ordinary adult, 5 trained professional (soldier, veteran thief), 7 elite or champion, 9 legendary, 10 godlike.";
 
 const CAST_SYSTEM = `You assign game stats to one character (or group) in a text adventure. Output ONLY JSON:
-{"age": int|null, "power_tier": int, "attributes": {"strength": int, "agility": int, "wits": int, "charm": int}, "skills": {name: int}, "abilities": {name: int}, "hp": int, "count": int|null}
-${SCALE} Give 1-4 skills that fit the role; abilities only for supernatural powers the world has. hp: ordinary person 8-10, tough fighter 12-16, large creatures more. "count": how many individuals if this is a group (gang, squad, pack, army), else null; a group's stats are those of a typical member. Judge from the role, description and world, never from what would make the story convenient for anyone.`;
+{"age": int|null, "power_tier": int, "attributes": {"strength": int, "agility": int, "wits": int, "charm": int}, "skills": {name: int}, "abilities": {name: int}, "hp": int, "count": int|null, "thoughtfulness": int}
+${SCALE} "thoughtfulness" 0-5 is how much inner monologue they have, from intellect and personality: 0 mindless beast, 1 impulsive or simple, 2 ordinary, 3 reflective, 4 scheming, anxious or brilliant, 5 obsessive genius. Give 1-4 skills that fit the role; abilities only for supernatural powers the world has. hp: ordinary person 8-10, tough fighter 12-16, large creatures more. "count": how many individuals if this is a group (gang, squad, pack, army), else null; a group's stats are those of a typical member. Judge from the role, description and world, never from what would make the story convenient for anyone.`;
 
 export function castToSheet(c: Cast): Sheet {
   return Sheet.parse({ power_tier: c.power_tier, attributes: c.attributes, skills: c.skills, abilities: c.abilities, resources: { hp: { value: c.hp, max: c.hp } } });

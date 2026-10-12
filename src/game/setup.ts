@@ -35,6 +35,7 @@ const DraftNpc = z.object({
   room: Str(80).optional().catch(undefined),
   sheet: Sheet.catch(Sheet.parse({})),
   count: z.number().int().min(2).max(100000).nullable().catch(null),
+  thoughtfulness: z.number().int().min(0).max(5).nullable().catch(null),
 });
 
 export const WorldDraft = z.object({
@@ -159,7 +160,7 @@ export function buildSeed(spec: z.infer<typeof AdventureSpec>): Seed {
       kind: "character",
       name: n.name,
       parent: rooms.get((n.room ?? "").toLowerCase()) ?? startRoom,
-      props: { age: n.age, description: n.description, traits: n.traits, goals: n.goals, sheet: n.sheet, group: n.count ? { count: n.count } : null, prominence: n.count ? "background" : "major" },
+      props: { age: n.age, description: n.description, traits: n.traits, goals: n.goals, sheet: n.sheet, group: n.count ? { count: n.count } : null, prominence: n.count ? "background" : "major", thoughtfulness: n.thoughtfulness ?? undefined },
     });
   }
   const ref = (xs: string[]) => [...new Set(xs.map((x) => named.get(x.toLowerCase())).filter((x): x is string => !!x))];
@@ -188,7 +189,7 @@ export function blankDraft(b: WorldBrief, place: string, room: string): WorldDra
 const json = (t: string): unknown => JSON.parse(t.replace(/^```(?:json)?|```$/g, "").trim());
 
 const WORLD_SYSTEM = `You design the starting state of a second-person text adventure from the player's brief. Output ONLY JSON:
-{"opening": "2-4 paragraphs, second person, present tense, ending where the player can act", "region": str, "start": {"place": str, "room": str, "zones": [str], "description": str}, "places": [{"name": str, "rooms": [{"name": str, "description": str}]}], "npcs": [{"name": str, "age": int|null, "description": str, "traits": str, "goals": str, "room": str, "sheet": {"power_tier": int, "attributes": {"strength","agility","wits","charm"}, "skills": {..}, "resources": {"hp": {"value": n, "max": n}}}, "count": int|null}],
+{"opening": "2-4 paragraphs, second person, present tense, ending where the player can act", "region": str, "start": {"place": str, "room": str, "zones": [str], "description": str}, "places": [{"name": str, "rooms": [{"name": str, "description": str}]}], "npcs": [{"name": str, "age": int|null, "description": str, "traits": str, "goals": str, "room": str, "sheet": {"power_tier": int, "attributes": {"strength","agility","wits","charm"}, "skills": {..}, "resources": {"hp": {"value": n, "max": n}}}, "count": int|null, "thoughtfulness": 0-5 (inner monologue from intellect and personality: 1 impulsive, 2 ordinary, 4 scheming or anxious)}],
  "secrets": [{"text": str, "kind": "boon"|"danger"|"horror"|"twist", "urgency": "dormant"|"stirring"|"active", "about": [names of places/rooms/NPCs it belongs to], "known_by": [NPC names]}],
  "cultivation": {"realms": [str, ...], "resource": str|null} | null}
 Rooms in "places" may have "notable": true when something important is there (a crypt, a vault); ordinary rooms are not notable.
