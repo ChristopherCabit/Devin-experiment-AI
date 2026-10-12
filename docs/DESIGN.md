@@ -37,7 +37,7 @@ Status: draft for review. No code has been written yet.
 
 ```
  phone / PC browser
-        │  HTTPS via Fly proxy (in-app passkey auth, §13)
+        │  local app (Tauri 2 shell), direct HTTPS to OpenRouter (§13)
         ▼
  ┌────────────────────────── app server (single process) ──────────────────────────┐
  │  Web UI (play + author mode)                                                     │
@@ -264,7 +264,9 @@ Code packs the blocks in priority order, truncating within each block, so the bu
 
 ## 13. Hosting and auth
 
-**Decision: B3. Fly.io machine + volume, public HTTPS, with auth inside the app.** It needs no client app or extra login layer on any device, and multi-user accounts can be added later without restructuring.
+> **Superseded (2026-10):** hosting was dropped. The app now runs entirely on the device as a Tauri 2 app (Windows, Linux, Android) with SQLite in WebAssembly, saves in the OS app-data folder and direct ZDR calls to OpenRouter. There is no server, login or open port; the API key lives on the device and its OpenRouter credit limit bounds misuse. See `docs/BUILD.md`. The rest of this section is kept as history.
+
+**Former decision: B3. Fly.io machine + volume, public HTTPS, with auth inside the app.** It needs no client app or extra login layer on any device, and multi-user accounts can be added later without restructuring.
 
 - **Host:** 1 small Fly machine (shared CPU, 1 GB RAM for the embedding model) plus a Fly volume for SQLite. The URL is `*.fly.dev`, with a custom domain optional later. TLS is terminated by Fly.
 - **Secrets:** the provider API key, the DB key, the backup key and the one-time setup code are stored only as Fly secrets.
@@ -292,7 +294,7 @@ The first public deploy remains a check-in point.
 
 ## 14. Cost model and spend cap
 Estimates; to be verified against live pricing.
-- **Fixed:** ~$4–6 (Fly machine + volume). A domain is optional (~$1/mo).
+- **Fixed:** $0 (no hosting).
 - **Per turn:**
   - DeepSeek V3-class narrator at 20k context: ≈ $0.007. At 32k: ≈ $0.010.
   - RP-tuned 70B narrator: ≈ $0.016.
@@ -310,7 +312,7 @@ Estimates; to be verified against live pricing.
 - **Local embeddings:** `bge-small-en-v1.5` (or similar) via ONNX Runtime on CPU.
 - **LLM client:** OpenAI-compatible, provider-agnostic. Models are configured per role: narrator, parser, verifier, summarizer.
 - **Tests:** Vitest. A scripted "long run" harness replays 500+ turns against recorded or mock models to check coherence invariants. Separate eval scripts test against real models.
-- **Deploy:** Docker image, GitHub Actions CI.
+- **Distribution:** Tauri 2 builds (APK, .deb/AppImage, .msi/.exe) from GitHub Actions.
 
 ## 16. Verification (definition of done for deploy)
 1. **HTTPS:** the live URL serves over valid TLS. Every non-allow-listed route rejects unauthenticated requests (§13). Registration is closed after setup.

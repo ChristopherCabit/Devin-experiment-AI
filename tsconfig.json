@@ -9,9 +9,21 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist",
     "rootDir": ".",
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "noEmit": true
   },
-  "include": ["src", "test"]
+  "include": [
+    "src",
+    "test",
+    "web",
+    "vite.config.ts"
+  ]
 }

@@ -51,7 +51,7 @@ export class TurnLog {
   constructor(private readonly store: WorldStore) {}
 
   lastTurn(): number {
-    const { n } = this.store.db.prepare("SELECT coalesce(max(n), 0) AS n FROM turns").get() as { n: number };
+    const { n } = this.store.db.prepare("SELECT coalesce(max(n), 0) AS n FROM turns").get() as unknown as { n: number };
     return n;
   }
 
@@ -105,7 +105,7 @@ export class TurnLog {
   /** Reverts and removes the latest turn. Returns it, or null if the log is empty. */
   undo(): TurnRecord | null {
     return this.store.transaction(() => {
-      const row = this.store.db.prepare("SELECT * FROM turns ORDER BY n DESC LIMIT 1").get() as TurnRow | undefined;
+      const row = this.store.db.prepare("SELECT * FROM turns ORDER BY n DESC LIMIT 1").get() as unknown as TurnRow | undefined;
       if (!row) return null;
       const rec = rowToRecord(row);
       this.store.revert(rec.changes);
@@ -121,7 +121,7 @@ export class TurnLog {
   }
 
   history(limit = 50): TurnRecord[] {
-    const rows = this.store.db.prepare("SELECT * FROM turns ORDER BY n DESC LIMIT ?").all(limit) as TurnRow[];
+    const rows = this.store.db.prepare("SELECT * FROM turns ORDER BY n DESC LIMIT ?").all(limit) as unknown as TurnRow[];
     return rows.map(rowToRecord).reverse();
   }
 }

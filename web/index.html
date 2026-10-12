@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161a">
+<link rel="manifest" href="./manifest.json">
+<link rel="stylesheet" href="./style.css">
+<title>Adventure</title>
+</head>
+<body>
+<section id="app" hidden>
+  <header>
+    <span id="title"></span>
+    <span id="status"></span>
+    <nav>
+      <button data-tab="play" class="active">Play</button>
+      <button data-tab="cast">Edit</button>
+      <button data-tab="world">World</button>
+    </nav>
+  </header>
+
+  <main id="tab-play" class="tab">
+    <div id="story"></div>
+    <p id="interpreted" class="msg"></p>
+    <form id="turn-form">
+      <div class="modes">
+        <label><input type="radio" name="kind" value="do" checked>Do</label>
+        <label><input type="radio" name="kind" value="say">Say</label>
+        <label><input type="radio" name="kind" value="story">Story</label>
+        <label><input type="radio" name="kind" value="continue">Continue</label>
+      </div>
+      <textarea id="input" rows="2" placeholder="What do you do?"></textarea>
+      <div class="row">
+        <button type="button" id="btn-undo">Undo</button>
+        <button type="button" id="btn-retry">Retry</button>
+        <button type="submit" id="btn-send" class="primary">Send</button>
+      </div>
+    </form>
+  </main>
+
+  <main id="tab-cast" class="tab" hidden>
+    <select id="entity-select"></select>
+    <label>Name <input id="entity-name"></label>
+    <label>Aliases (comma separated) <input id="entity-aliases"></label>
+    <label>Properties (JSON) <textarea id="entity-props" rows="18" spellcheck="false"></textarea></label>
+    <div class="row"><button id="btn-entity-save" class="primary">Save</button></div>
+    <h3>Add</h3>
+    <div class="row">
+      <select id="new-kind"><option>character</option><option>item</option><option>container</option><option>room</option></select>
+      <input id="new-name" placeholder="Name">
+    </div>
+    <input id="new-parent" placeholder="Parent id (e.g. room:common)">
+    <div class="row"><button id="btn-entity-add">Create</button></div>
+    <p id="cast-msg" class="msg"></p>
+  </main>
+
+  <main id="tab-world" class="tab" hidden>
+    <h3>Saves</h3>
+    <div id="saves"></div>
+    <input id="save-name" placeholder="Name (for New / Duplicate)">
+    <div class="row">
+      <button id="btn-save-new">New adventure</button>
+      <button id="btn-save-dup">Duplicate current</button>
+      <button id="btn-save-import">Import</button>
+    </div>
+    <h3>This world</h3>
+    <label>Title <input id="s-title"></label>
+    <label>Premise <textarea id="s-premise" rows="6"></textarea></label>
+    <label>Style <textarea id="s-style" rows="3"></textarea></label>
+    <label>Content intensity
+      <select id="s-intensity"><option value="none">none</option><option value="mild">mild</option><option value="explicit">explicit</option></select>
+    </label>
+    <label>Hard limits <textarea id="s-limits" rows="2"></textarea></label>
+    <label>Death policy
+      <select id="s-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select>
+    </label>
+    <label>Narrator model <input id="s-narratorModel"></label>
+    <label>Parser model <input id="s-parserModel"></label>
+    <label>Context tokens <input id="s-contextTokens" type="number" min="4000" max="128000" step="1000"></label>
+    <div class="row"><button id="btn-settings-save" class="primary">Save</button></div>
+    <p id="sheet"></p>
+    <h3>App settings</h3>
+    <label>OpenRouter API key <input id="cfg-key" type="password" autocomplete="off" placeholder="sk-or-…"></label>
+    <label>Monthly spend cap (USD) <input id="cfg-cap" type="number" min="0" step="1"></label>
+    <div class="row"><button id="btn-cfg-save">Save app settings</button><button id="btn-cfg-clear" class="danger">Remove key</button></div>
+    <p id="spend"></p>
+    <p id="world-msg" class="msg"></p>
+  </main>
+</section>
+<p id="boot-msg" class="msg">Loading…</p>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

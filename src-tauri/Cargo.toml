@@ -1,0 +1,28 @@
+[package]
+name = "adventure"
+version = "0.1.0"
+description = "Private AI text adventure"
+authors = ["ChristopherCabit"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "adventure_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.3", features = [] }
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+
+# Keeps debug APKs small enough to sideload.
+[profile.dev]
+debug = false
+strip = "symbols"
