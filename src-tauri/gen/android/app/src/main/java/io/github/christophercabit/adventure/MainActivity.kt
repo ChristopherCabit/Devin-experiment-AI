@@ -1,11 +1,4 @@
 package io.github.christophercabit.adventure
 
-import android.os.Bundle
-import androidx.activity.enableEdgeToEdge
-
-class MainActivity : TauriActivity() {
-  override fun onCreate(savedInstanceState: Bundle?) {
-    enableEdgeToEdge()
-    super.onCreate(savedInstanceState)
-  }
-}
+// Not edge-to-edge: Android WebView doesn't report safe-area insets, so the status bar would cover the header.
+class MainActivity : TauriActivity()

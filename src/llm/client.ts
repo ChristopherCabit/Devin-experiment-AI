@@ -61,7 +61,8 @@ export class LlmClient {
 
   constructor(private readonly opts: LlmClientOptions) {
     this.baseUrl = opts.baseUrl ?? "https://openrouter.ai/api/v1";
-    this.fetchImpl = opts.fetch ?? (globalThis.fetch as unknown as FetchLike);
+    // Bound: WebViews throw "Illegal invocation" when fetch is called detached from window.
+    this.fetchImpl = opts.fetch ?? (globalThis.fetch.bind(globalThis) as unknown as FetchLike);
     this.timeoutMs = opts.timeoutMs ?? 90_000;
   }
 
