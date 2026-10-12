@@ -52,13 +52,74 @@
     </div>
     <input id="new-parent" placeholder="Parent id (e.g. room:common)">
     <div class="row"><button id="btn-entity-add">Create</button></div>
+    <h3>Secrets</h3>
+    <label class="check"><input type="checkbox" id="show-spoilers"> Show spoilers</label>
+    <div id="secrets-list" class="msg"></div>
     <p id="cast-msg" class="msg"></p>
+  </main>
+
+  <main id="tab-new" class="tab" hidden>
+    <h3>New adventure</h3>
+    <label>Save name <input id="n-name" value="New adventure"></label>
+    <label>Start from
+      <select id="n-template"><option value="custom">Scratch</option><option value="starter">The Lantern Inn (starter world)</option></select>
+    </label>
+    <div id="n-custom">
+      <label>Title <input id="n-title" placeholder="Untitled"></label>
+      <label>Premise <textarea id="n-premise" rows="4" placeholder="Setting, tone, genre, what the story is about"></textarea></label>
+      <label>Starting situation <textarea id="n-situation" rows="3" placeholder="Where you are and what is happening as it begins"></textarea></label>
+      <div class="row"><input id="n-place" placeholder="Starting place (Blank)"><input id="n-room" placeholder="Room / spot (Blank)"></div>
+      <label>Content intensity <select id="n-intensity"><option value="explicit">explicit</option><option value="mild">mild</option><option value="none">none</option></select></label>
+      <label>Hard limits <input id="n-limits"></label>
+      <label>Death policy <select id="n-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select></label>
+      <label>World power, 1 (peasant drama) to 10 (demigods) <input id="n-power" type="number" min="1" max="10" value="6"></label>
+      <label class="check"><input type="checkbox" id="n-unbounded"> Unbounded power: no stat cap or point budget for you (godlike play)</label>
+      <label class="check"><input type="checkbox" id="n-npcs" checked> Generate NPCs (off: you start alone)</label>
+      <h3>Progression</h3>
+      <label class="check"><input type="checkbox" id="n-prog-practice" checked> Practice: skills improve with use</label>
+      <label class="check"><input type="checkbox" id="n-prog-mentors" checked> Mentors: characters can train you up to their level</label>
+      <label>Cultivation realms, lowest first, one per line (empty = none) <textarea id="n-prog-realms" rows="3"></textarea></label>
+      <label>Cultivation resource (optional) <input id="n-prog-resource" placeholder="spirit stones"></label>
+
+      <div class="row"><button id="btn-n-generate">Generate world</button><button id="btn-n-blank">Blank world</button></div>
+      <div id="n-draft" hidden>
+        <label>Opening <textarea id="n-opening" rows="6"></textarea></label>
+        <p id="n-places" class="msg"></p>
+        <div id="n-npc-list"></div>
+      </div>
+      <h3>Your character</h3>
+      <label>Name <input id="n-pname"></label>
+      <label>Age <input id="n-age" type="number" min="18" value="25"></label>
+      <label>Description <textarea id="n-desc" rows="3" placeholder="Appearance, background, what you are good and bad at"></textarea></label>
+      <div class="modes">
+        <label><input type="radio" name="statsMode" value="pointbuy" checked>Point-buy</label>
+        <label><input type="radio" name="statsMode" value="proposed">AI proposes</label>
+        <label><input type="radio" name="statsMode" value="freeform">Freeform</label>
+      </div>
+      <div class="row"><button id="btn-n-propose">Propose stats from description</button></div>
+      <div class="grid4">
+        <label>Strength <input id="n-a-strength" type="number" min="0" max="10" value="3"></label>
+        <label>Agility <input id="n-a-agility" type="number" min="0" max="10" value="3"></label>
+        <label>Wits <input id="n-a-wits" type="number" min="0" max="10" value="3"></label>
+        <label>Charm <input id="n-a-charm" type="number" min="0" max="10" value="3"></label>
+      </div>
+      <label>Skills <input id="n-skills" placeholder="swordsmanship 4, stealth 2"></label>
+      <label>Abilities (cost double) <input id="n-abilities" placeholder="fire magic 2"></label>
+      <p id="n-points" class="msg"></p>
+      <div class="grid4">
+        <label>HP <input id="n-hp" type="number" min="1" value="10"></label>
+        <label>Coin <input id="n-coin" type="number" min="0" value="5"></label>
+      </div>
+      <label>Starting items <input id="n-items" placeholder="knife, cloak, rope"></label>
+    </div>
+    <div class="row"><button id="btn-n-cancel">Cancel</button><button id="btn-n-start" class="primary">Start</button></div>
+    <p id="n-msg" class="msg"></p>
   </main>
 
   <main id="tab-world" class="tab" hidden>
     <h3>Saves</h3>
     <div id="saves"></div>
-    <input id="save-name" placeholder="Name (for New / Duplicate)">
+    <input id="save-name" placeholder="Name (for Duplicate)">
     <div class="row">
       <button id="btn-save-new">New adventure</button>
       <button id="btn-save-dup">Duplicate current</button>
@@ -75,6 +136,12 @@
     <label>Death policy
       <select id="s-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select>
     </label>
+    <label>World power (1-10) <input id="s-powerCeiling" type="number" min="1" max="10"></label>
+    <label class="check"><input type="checkbox" id="s-unboundedPower"> Unbounded power (godlike play)</label>
+    <label class="check"><input type="checkbox" id="s-prog-practice" checked> Practice: skills improve with use</label>
+      <label class="check"><input type="checkbox" id="s-prog-mentors" checked> Mentors: characters can train you up to their level</label>
+      <label>Cultivation realms, lowest first, one per line (empty = none) <textarea id="s-prog-realms" rows="3"></textarea></label>
+      <label>Cultivation resource (optional) <input id="s-prog-resource" placeholder="spirit stones"></label>
     <label>Narrator model <input id="s-narratorModel"></label>
     <label>Parser model <input id="s-parserModel"></label>
     <label>Context tokens <input id="s-contextTokens" type="number" min="4000" max="128000" step="1000"></label>

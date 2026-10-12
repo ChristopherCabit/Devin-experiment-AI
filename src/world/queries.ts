@@ -1,5 +1,6 @@
 import type { WorldStore } from "./store.js";
 import {
+  Secret,
   CharacterProps,
   ItemProps,
   LOCATION_KINDS,
@@ -111,3 +112,5 @@ export function canSee(store: WorldStore, viewerId: string, targetId: string): b
   if (target?.kind === "character" && charProps(target).scene.hidden) return false;
   return !blockedByClosed(store, targetId, lv.id);
 }
+
+export const secrets = (store: WorldStore): Secret[] => Secret.array().catch([]).parse(store.getMeta<unknown>("secrets", []));

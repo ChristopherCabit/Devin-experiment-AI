@@ -20,6 +20,9 @@ import {
   roomProps,
   slugify,
 } from "../world/queries.js";
+import { memberSheet, seeded } from "../world/variance.js";
+import { Secret, Sheet } from "../world/types.js";
+import { secrets } from "../world/queries.js";
 import { AUTHOR_ONLY_OPS, ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
 
 export interface Limits {
@@ -212,6 +215,92 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       else if (isLocation(e)) props = RoomProps.parse(props);
       else if (PORTABLE.includes(e.kind)) props = ItemProps.parse(props);
       store.putEntity({ ...e, name: op.name ?? e.name, aliases: op.aliases ?? e.aliases, props });
+      return {};
+    }
+
+    case "update_character": {
+      editChar(store, op.id, (p, e) => {
+        if (ctx.source === "narrator" && p.is_player) fail("the narrator cannot edit the player character");
+        if (op.sheet) {
+          if (ctx.source === "narrator") fail("sheets are set by the engine");
+          p.sheet = Sheet.parse(op.sheet);
+        }
+        const rec = p as Record<string, unknown>;
+        for (const k of ["description", "appearance", "traits", "goals", "backstory"] as const) if (op[k]) rec[k] = op[k];
+        for (const path of ["attributes", "skills", "abilities"] as const) {
+          for (const [k, v] of Object.entries(op.add_stats?.[path] ?? {})) if (!(k in p.sheet[path])) p.sheet[path][k] = v;
+        }
+        if (op.aliases) e.aliases = [...new Set([...e.aliases, ...op.aliases])];
+      });
+      return {};
+    }
+
+    case "group_count":
+      editChar(store, op.id, (p) => {
+        if (!p.group) fail(`${op.id} is not a group`);
+        p.group.count = Math.max(0, p.group.count + op.delta);
+      });
+      return {};
+
+    case "split_member": {
+      const g = need(store, op.group, ["character"]);
+      const gp = charProps(g);
+      if (!gp.group || gp.group.count < 1) fail(`${op.group} has no members left to single out`);
+      const id = op.id ?? freshId(store, "character", op.name);
+      if (!id.startsWith("character:")) fail("id prefix must match kind");
+      if (store.getEntity(id)) fail(`${id} already exists`);
+      const base = Object.fromEntries(Object.entries(gp).filter(([k]) => !["group", "mind", "sheet"].includes(k)));
+      const extra = Object.fromEntries(Object.entries(op.props).filter(([k]) => !["sheet", "group", "is_player"].includes(k)));
+      const props = CharacterProps.parse({
+        ...base,
+        ...extra,
+        sheet: memberSheet(gp.sheet, seeded(`${g.id}|${id}|${gp.group.count}`)),
+        group: null,
+        member_of: g.id,
+      });
+      props.scene = { ...props.scene, zone: op.zone ?? gp.scene.zone, hands: { left: null, right: null }, worn: {}, relations: [] };
+      store.putEntity({ id, kind: "character", name: op.name, aliases: [], parent_id: g.parent_id, props, created_turn: ctx.turn });
+      store.putEntity({ ...g, props: { ...gp, group: { count: gp.group.count - 1 } } });
+      return { id };
+    }
+
+    case "practice":
+      editChar(store, op.character, (p) => {
+        p.sheet.progress[op.key] = op.value;
+      });
+      return {};
+
+    case "remove_entity": {
+      const e = need(store, op.id);
+      if (e.kind === "character" && charProps(e).is_player) fail("cannot remove the player");
+      if (store.children(e.id).length) fail(`${e.name} still contains things`);
+      if (PORTABLE.includes(e.kind)) detach(store, e.id);
+      store.deleteEntity(e.id);
+      return {};
+    }
+
+    case "secret": {
+      for (const id of [...op.subjects, ...op.known_by]) need(store, id);
+      const list = secrets(store);
+      const id = `secret:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      list.push(Secret.parse({ ...op, id, created_turn: ctx.turn }));
+      store.setMeta("secrets", list);
+      return { id };
+    }
+
+    case "reveal":
+    case "hint":
+    case "secret_urgency": {
+      const list = secrets(store);
+      const sec = list.find((x) => x.id === op.id);
+      if (!sec) fail(`unknown secret ${op.id}`);
+      if (op.op === "reveal") {
+        if (sec.revealed) fail(`${op.id} is already known`);
+        sec.revealed = true;
+        sec.revealed_turn = ctx.turn;
+      } else if (op.op === "hint") sec.hinted_turn = ctx.turn;
+      else sec.urgency = op.to;
+      store.setMeta("secrets", list);
       return {};
     }
 

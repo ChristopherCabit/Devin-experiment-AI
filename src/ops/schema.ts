@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EntityId, EntityKind, Hand, Relation, Tier } from "../world/types.js";
+import { EntityId, EntityKind, Hand, Relation, SECRET_KINDS, Tier, URGENCIES } from "../world/types.js";
 
 const Name = z.string().trim().min(1).max(80);
 const Zone = z.string().trim().toLowerCase().min(1).max(40);
@@ -28,6 +28,54 @@ export const Op = z.discriminatedUnion("op", [
       props: z.record(z.string(), z.unknown()).optional(),
     })
     .strict(),
+  z
+    .object({
+      op: z.literal("update_character"),
+      id: EntityId,
+      description: Text.optional(),
+      appearance: Text.optional(),
+      traits: Text.optional(),
+      goals: Text.optional(),
+      backstory: Text.optional(),
+      aliases: z.array(Name).optional(),
+      /** Stats nobody has seen yet; existing values are never overwritten by this op. */
+      add_stats: z
+        .object({
+          attributes: z.record(z.string(), Tier).optional(),
+          skills: z.record(z.string(), Tier).optional(),
+          abilities: z.record(z.string(), Tier).optional(),
+        })
+        .optional(),
+      /** Engine only: a whole rated sheet from casting. */
+      sheet: z.record(z.string(), z.unknown()).optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal("group_count"), id: EntityId, delta: z.number().int() }).strict(),
+  z
+    .object({
+      op: z.literal("split_member"),
+      group: EntityId,
+      id: EntityId.optional(),
+      name: Name,
+      zone: Zone.optional(),
+      props: z.record(z.string(), z.unknown()).default({}),
+    })
+    .strict(),
+  z.object({ op: z.literal("practice"), character: EntityId, key: Name, value: z.number().min(0) }).strict(),
+  z.object({ op: z.literal("remove_entity"), id: EntityId }).strict(),
+  z
+    .object({
+      op: z.literal("secret"),
+      text: Text,
+      kind: z.enum(SECRET_KINDS).default("twist"),
+      subjects: z.array(EntityId).default([]),
+      known_by: z.array(EntityId).default([]),
+      urgency: z.enum(URGENCIES).default("dormant"),
+    })
+    .strict(),
+  z.object({ op: z.literal("reveal"), id: z.string().min(1) }).strict(),
+  z.object({ op: z.literal("hint"), id: z.string().min(1) }).strict(),
+  z.object({ op: z.literal("secret_urgency"), id: z.string().min(1), to: z.enum(URGENCIES) }).strict(),
   z.object({ op: z.literal("set_zone"), id: EntityId, zone: Zone }).strict(),
   z.object({ op: z.literal("set_posture"), id: EntityId, posture: Name }).strict(),
   z.object({ op: z.literal("hold"), character: EntityId, item: EntityId, hand: Hand.optional() }).strict(),
@@ -80,7 +128,7 @@ export type OpName = Op["op"];
 export const AUTHOR_ONLY_OPS: ReadonlySet<OpName> = new Set(["author_update"]);
 
 /** Ops the narrator may never emit: they come only from code-resolved outcomes. */
-export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression"]);
+export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression", "practice", "remove_entity", "secret", "hint", "secret_urgency"]);
 
 export const OpSource = z.enum(["narrator", "engine", "author"]);
 export type OpSource = z.infer<typeof OpSource>;
