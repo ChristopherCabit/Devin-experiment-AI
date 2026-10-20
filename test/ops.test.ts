@@ -180,7 +180,7 @@ describe("NPC minds", () => {
     expect(run({ op: "thought", npc: "character:mara", key: "b", text: "Two." }, ctx).ok).toBe(true);
     expect(run({ op: "thought", npc: "character:mara", key: "c", text: "Three." }, ctx).ok).toBe(true);
     expect(run({ op: "thought", npc: "character:mara", key: "a", text: "One, revised." }, ctx).ok).toBe(true);
-    expect(run({ op: "forget_thought", npc: "character:mara", key: "b" }).ok).toBe(true);
+    expect(run({ op: "forget_thought", npc: "character:mara", key: "c" }).ok).toBe(true);
     expect(mara().mind.thoughts).toEqual({ a: "One, revised." });
     expect(
       run({ op: "relationship_note", npc: "character:mara", target: PLAYER, text: "Resents you; can't stop watching you." }).ok,
