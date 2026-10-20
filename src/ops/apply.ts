@@ -438,8 +438,9 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       guardPlayerMind(store, op.npc, ctx);
       editChar(store, op.npc, (p) => {
         const isNew = !(op.key in p.mind.thoughts);
-        if (isNew && Object.keys(p.mind.thoughts).length >= limits.maxThoughts) {
-          fail(`brain full (${limits.maxThoughts}); forget a thought first`);
+        const keys = Object.keys(p.mind.thoughts);
+        if (isNew && keys.length >= limits.maxThoughts) {
+          p.mind.thoughts = Object.fromEntries(Object.entries(p.mind.thoughts).slice(keys.length - limits.maxThoughts + 1));
         }
         p.mind.thoughts[op.key] = op.text;
       });

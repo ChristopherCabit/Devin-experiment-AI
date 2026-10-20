@@ -170,7 +170,7 @@ describe("authority boundaries", () => {
 });
 
 describe("NPC minds", () => {
-  it("stores conflicting emotions and caps brain size", () => {
+  it("stores conflicting emotions and evicts old thoughts when the mind is full", () => {
     const { store, run } = setup();
     const mara = () => charProps(store.getEntity("character:mara")!);
     expect(run({ op: "emotion", npc: "character:mara", set: ["furious", "aroused", "furious"] }).ok).toBe(true);
@@ -178,7 +178,7 @@ describe("NPC minds", () => {
     const ctx = { ...narrator, limits: { maxThoughts: 2 } };
     expect(run({ op: "thought", npc: "character:mara", key: "a", text: "One." }, ctx).ok).toBe(true);
     expect(run({ op: "thought", npc: "character:mara", key: "b", text: "Two." }, ctx).ok).toBe(true);
-    expect(run({ op: "thought", npc: "character:mara", key: "c", text: "Three." }, ctx).ok).toBe(false);
+    expect(run({ op: "thought", npc: "character:mara", key: "c", text: "Three." }, ctx).ok).toBe(true);
     expect(run({ op: "thought", npc: "character:mara", key: "a", text: "One, revised." }, ctx).ok).toBe(true);
     expect(run({ op: "forget_thought", npc: "character:mara", key: "b" }).ok).toBe(true);
     expect(mara().mind.thoughts).toEqual({ a: "One, revised." });

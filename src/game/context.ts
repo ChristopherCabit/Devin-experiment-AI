@@ -24,6 +24,10 @@ export interface WorldSettings {
   progression: Progression;
   /** Scale for per-character inner-thought allowance: 0 off, 2 normal, 5 very introspective. */
   thoughtsPerTurn: number;
+  /** Target size of each narration. */
+  length: "short" | "medium" | "long";
+  /** Allow the narrator to step out of the story for comments; off by default. */
+  asides: boolean;
 }
 
 export const Progression = z.object({
@@ -53,6 +57,8 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   unboundedPower: false,
   progression: { practice: true, mentors: true, cultivation: null },
   thoughtsPerTurn: 2,
+  length: "medium",
+  asides: false,
 };
 
 export function getSettings(store: WorldStore): WorldSettings {
@@ -138,6 +144,8 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
     if (rp.zones.length) lines.push(`Zones: ${rp.zones.join(", ")}`);
     const siblings = store.children(here.parent_id ?? "").filter((r) => r.kind === "room" && r.id !== here.id);
     if (siblings.length) lines.push(`Other rooms here: ${siblings.map((r) => `${r.name} [${r.id}]`).join(", ")}`);
+    const nearby = siblings.flatMap((r) => store.children(r.id).filter((c) => c.kind === "character").map((c) => `${c.name} [${c.id}] in ${r.name}`));
+    if (nearby.length) lines.push(`Nearby but NOT present (cannot see the protagonist; hear only shouting or loud noise): ${nearby.join("; ")}`);
     const things = store.children(here.id).filter((c) => c.kind === "item" || c.kind === "container");
     if (things.length) lines.push("Objects:", ...things.flatMap((t) => itemLine(store, t)));
     for (const c of store.children(here.id)) {

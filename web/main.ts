@@ -50,7 +50,8 @@ function busy(on: boolean) {
 
 function showTurn(out: TurnOutput & { state: GameState }) {
   render(out.state);
-  $("interpreted").textContent = [out.interpreted ? `Interpreted as: ${out.interpreted}` : "", out.rejected.length ? `Engine rejected: ${out.rejected.join("; ")}` : ""]
+  loadEntities();
+  $("interpreted").textContent = [out.interpreted ? `Interpreted as: ${out.interpreted}` : "", out.rejected.some((r) => !/engine|sheets are set/.test(r)) ? `Engine rejected: ${out.rejected.filter((r) => !/engine|sheets are set/.test(r)).join("; ")}` : ""]
     .filter(Boolean)
     .join(" · ");
 }
@@ -86,6 +87,7 @@ $("btn-undo").onclick = async () => {
   busy(true);
   try {
     render(await game.undo());
+    loadEntities();
     $("interpreted").textContent = "";
   } catch (e) {
     $("interpreted").textContent = errText(e);
@@ -118,7 +120,7 @@ function loadEntities(selectId?: string) {
   entities = game.entities();
   const sel = $<HTMLSelectElement>("entity-select");
   const keep = selectId || sel.value;
-  sel.replaceChildren(...entities.filter((e) => e.kind !== "region").map((e) => new Option(`${e.name} (${e.id})`, e.id)));
+  sel.replaceChildren(...entities.filter((e) => e.kind !== "region").map((e) => new Option(`${e.name}${e.kind === "character" ? ` — ${entities.find((x) => x.id === e.parent_id)?.name ?? "nowhere"}` : ""} (${e.id})`, e.id)));
   if (keep) sel.value = keep;
   showEntity();
   renderSecrets();
@@ -174,13 +176,13 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
 const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;
   for (const k of SETTINGS) {
-    if (k === "unboundedPower") $(`s-${k}`).checked = Boolean(s[k]);
+    if (k === "unboundedPower" || k === "asides") $(`s-${k}`).checked = Boolean(s[k]);
     else $(`s-${k}`).value = String(s[k]);
   }
   progressionTo("s-prog", game.settings().progression);
@@ -192,7 +194,7 @@ function loadSettings() {
 }
 $("btn-settings-save").onclick = async () => {
   const body: Record<string, unknown> = {};
-  for (const k of SETTINGS) body[k] = k === "unboundedPower" ? $(`s-${k}`).checked : NUMERIC.has(k) ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
+  for (const k of SETTINGS) body[k] = k === "unboundedPower" || k === "asides" ? $(`s-${k}`).checked : NUMERIC.has(k) ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
   body.progression = progressionFrom("s-prog");
   if (body.unboundedPower && !game.settings().unboundedPower && !confirm("Turn on unbounded power? Your character's stats will no longer be capped.")) return;
   try {

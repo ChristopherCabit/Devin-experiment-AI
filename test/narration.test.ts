@@ -72,3 +72,14 @@ describe("narration fixes", () => {
     expect(JSON.stringify(store.getEntity("character:mara")?.props)).not.toContain('"k"');
   });
 });
+
+describe("state fixes", () => {
+  it("a full mind drops its oldest thought instead of rejecting the new one", () => {
+    const { store } = world();
+    const ctx = { source: "narrator" as const, turn: 3 };
+    for (let i = 0; i < 40; i++) expect(applyOp(store, { op: "thought", npc: "character:mara", key: `k${i}`, text: "x" }, ctx).ok).toBe(true);
+    const th = (store.getEntity("character:mara")?.props as { mind: { thoughts: Record<string, string> } }).mind.thoughts;
+    expect(th).toHaveProperty("k39");
+    expect(th).not.toHaveProperty("k0");
+  });
+});
