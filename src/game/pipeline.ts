@@ -213,18 +213,35 @@ export function limitThoughts<T>(ops: T[], budgets: Budget[]): T[] {
 }
 
 export function splitNarration(raw: string): { ops: unknown[]; prose: string; badLines: number } {
-  const m = /<ops>([\s\S]*?)<\/ops>/i.exec(raw);
-  const prose = (m ? raw.replace(m[0], "") : raw).trim();
   const ops: unknown[] = [];
   let badLines = 0;
-  for (const line of (m?.[1] ?? "").split("\n").map((l) => l.trim()).filter(Boolean)) {
+  const lines: string[] = [];
+  let rest = raw.replace(/<ops>([\s\S]*?)<\/ops>/gi, (_, body: string) => {
+    lines.push(...body.split("\n"));
+    return "";
+  });
+  // Some models emit {"ops":[...]} or a fenced JSON block instead of the tags.
+  rest = rest.replace(/^\s*(?:```(?:json)?\s*)?(\{\s*"ops"\s*:[\s\S]*?\]\s*\})\s*(?:```)?/, (whole, json: string) => {
     try {
-      ops.push(JSON.parse(line.replace(/,$/, "")));
+      const v = JSON.parse(json) as { ops?: unknown };
+      if (Array.isArray(v.ops)) ops.push(...(v.ops as unknown[]));
+      return "";
+    } catch {
+      return whole;
+    }
+  });
+  for (const line of lines.map((l) => l.trim().replace(/,$/, "")).filter((l) => l && l !== "[]")) {
+    try {
+      ops.push(JSON.parse(line));
     } catch {
       badLines++;
     }
   }
-  return { ops, prose, badLines };
+  rest = rest.replace(/<\/?ops>/gi, "");
+  // The narrator must stop at the player's turn; drop anything written as the player's next input.
+  const cut = rest.search(/^>\s/m);
+  if (cut >= 0) rest = rest.slice(0, cut);
+  return { ops, prose: rest.trim(), badLines };
 }
 
 const titleCase = (s: string): string =>
@@ -256,8 +273,21 @@ export function travelOps(
   const locs = [...store.entitiesOfKind("room"), ...store.entitiesOfKind("place")];
   let hits = locs.filter((e) => names(e).includes(n));
   if (!hits.length) hits = locs.filter((e) => names(e).some((x) => ` ${x} `.includes(` ${n} `)));
+  if (!hits.length) {
+    // "the inn's common room" names an existing "Common Room": take the longest known name inside the phrase.
+    const inside = locs.map((e) => ({ e, len: Math.max(0, ...names(e).filter((x) => x && ` ${n} `.includes(` ${x} `)).map((x) => x.length)) }));
+    const best = Math.max(0, ...inside.map((h) => h.len));
+    hits = best ? inside.filter((h) => h.len === best).map((h) => h.e) : [];
+  }
+  const chain = [here, ...ancestors(store, here.id)];
+  const building = chain.find((e) => e.kind === "place");
+  const region = chain.find((e) => e.kind === "region");
   const rooms = hits.filter((e) => e.kind === "room");
-  const pick = rooms.length ? rooms : hits;
+  let pick = rooms.length ? rooms : hits;
+  if (pick.length > 1 && building) {
+    const local = pick.filter((e) => ancestors(store, e.id).some((a) => a.id === building.id));
+    if (local.length) pick = local;
+  }
   const minutes = scope === "same_building" ? 1 : 10;
   if (pick.length > 1) return null;
   const found = pick[0];
@@ -267,9 +297,6 @@ export function travelOps(
     if (to.id === here.id || ancestors(store, here.id).some((a) => a.id === to.id && to.kind === "room")) return null;
     return { name: to.name, ops: [{ op: "move", id: playerId, to: to.id }, { op: "time_advance", minutes }] };
   }
-  const chain = [here, ...ancestors(store, here.id)];
-  const building = chain.find((e) => e.kind === "place");
-  const region = chain.find((e) => e.kind === "region");
   const name = titleCase(destination.trim());
   if (scope === "same_building" && building) {
     const id = uniqueId(store, "room", name);
@@ -351,7 +378,7 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
 {"characters":[{"name":str,"description":"one line from the passage","age":int|null}],
  "details":[{"id":ID,"add":str}],
  "facts":[{"text":str,"subjects":[ID]}]}
-- characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned).
+- characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
 Empty arrays when nothing applies.`;
@@ -371,7 +398,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, prose: string, ops:
   const res = await llm.chat({
     model: s.parserModel,
     json: true,
-    maxTokens: 700,
+    maxTokens: 900,
     temperature: 0,
     messages: [
       { role: "system", content: REVIEW_PROMPT },
@@ -547,12 +574,18 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
         (notes.length ? ` · ${notes.join("; ")}` : "");
     }
   } else if (kind === "say") {
-    result = `The protagonist says: "${input.replace(/"/g, "'")}". Others respond from their own minds.`;
+    const loud = /!\s*$|\b(?:shouts?|yells?|bellows?|calls? (?:out|down|up))\b/i.test(input) || (input.length > 8 && input === input.toUpperCase());
+    result =
+      `The protagonist says: "${input.replace(/"/g, "'")}". Others respond from their own minds.` +
+      (loud ? " It is shouted; it carries to adjacent rooms." : " Spoken in a normal voice: only characters present in this room can hear it. Anyone elsewhere hears nothing and cannot answer unless the protagonist shouts or goes to them. Show the silence; don't explain why.");
   } else if (kind === "story") {
     result = "The player suggested where the story might go (non-binding; incorporate only what is consistent with state and characters' minds).";
   } else {
     result = "Continue the story naturally from here.";
   }
+
+  const selfName = kind === "say" ? /\b(?:[Mm]y name(?:'s| is)|[Nn]ame's|[Cc]all me|I'm|I am)\s+([A-Z][a-z]{1,20})\b/.exec(input)?.[1] : undefined;
+  if (selfName && !store.getEntity(playerId)?.aliases.includes(selfName)) engineOps.push({ op: "update_character", id: playerId, aliases: [selfName] });
 
   const turnNo = log.lastTurn() + 1;
   const hint = selectHint(store, playerId, pace, turnNo, rng);

@@ -11,6 +11,8 @@ export interface ChatRequest {
   maxTokens: number;
   temperature?: number;
   json?: boolean;
+  /** Hidden reasoning tokens cost latency; "off" falls back to "low" on models where reasoning is mandatory. */
+  reasoning?: "off" | "low" | "default";
 }
 
 export interface ChatResult {
@@ -47,7 +49,7 @@ export class LlmError extends Error {
 interface CompletionBody {
   choices?: { message?: { content?: string | null } }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
-  error?: { code?: string | number };
+  error?: { code?: string | number; message?: string };
 }
 
 /**
@@ -66,13 +68,19 @@ export class LlmClient {
     this.timeoutMs = opts.timeoutMs ?? 90_000;
   }
 
+  /** Models observed to reject disabling reasoning. */
+  static readonly mandatoryReasoning = new Set<string>();
+
   static requestBody(req: ChatRequest): Record<string, unknown> {
+    let mode = req.reasoning ?? "off";
+    if (mode === "off" && LlmClient.mandatoryReasoning.has(req.model)) mode = "low";
     return {
       model: req.model,
       messages: req.messages,
       max_tokens: req.maxTokens,
       temperature: req.temperature ?? 0.8,
       ...(req.json ? { response_format: { type: "json_object" } } : {}),
+      ...(mode === "off" ? { reasoning: { enabled: false } } : mode === "low" ? { reasoning: { effort: "low" } } : {}),
       provider: { zdr: true, data_collection: "deny" },
     };
   }
@@ -86,6 +94,10 @@ export class LlmClient {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     const body = (await res.json().catch(() => ({}))) as CompletionBody;
+    if (res.status === 400 && (req.reasoning ?? "off") === "off" && /reasoning is mandatory/i.test(String(body.error?.message)) && !LlmClient.mandatoryReasoning.has(req.model)) {
+      LlmClient.mandatoryReasoning.add(req.model);
+      return this.chat(req);
+    }
     if (!res.ok || body.error) throw new LlmError(res.status, String(body.error?.code ?? "error"));
     const text = body.choices?.[0]?.message?.content ?? "";
     const costUsd = body.usage?.cost ?? 0;
