@@ -634,7 +634,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   ];
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85 });
+    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning });
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;

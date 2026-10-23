@@ -149,8 +149,23 @@
       <label class="check"><input type="checkbox" id="s-prog-mentors" checked> Mentors: characters can train you up to their level</label>
       <label>Cultivation realms, lowest first, one per line (empty = none) <textarea id="s-prog-realms" rows="3"></textarea></label>
       <label>Cultivation resource (optional) <input id="s-prog-resource" placeholder="spirit stones"></label>
-    <label>Narrator model <input id="s-narratorModel"></label>
-    <label>Parser model <input id="s-parserModel"></label>
+    <label>Narrator model (pick or type any OpenRouter id) <input id="s-narratorModel" list="models-narrator"></label>
+    <datalist id="models-narrator">
+      <option value="z-ai/glm-5.3">GLM 5.3: recommended, steady timing</option>
+      <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: cheapest, restrained</option>
+      <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro: strong prose, ~1.5x cost</option>
+      <option value="moonshotai/kimi-k3">Kimi K3: richest characters, ~6x cost, slower</option>
+    </datalist>
+    <label>Narrator reasoning <select id="s-narratorReasoning">
+      <option value="off">Off (fastest; models that require it use low)</option>
+      <option value="low">Low</option>
+      <option value="default">Model default (slow)</option>
+    </select></label>
+    <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
+    <datalist id="models-parser">
+      <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>
+      <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro</option>
+    </datalist>
     <label>Context tokens <input id="s-contextTokens" type="number" min="4000" max="128000" step="1000"></label>
     <div class="row"><button id="btn-settings-save" class="primary">Save</button></div>
     <p id="sheet"></p>

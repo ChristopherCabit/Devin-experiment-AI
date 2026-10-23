@@ -16,6 +16,8 @@ export interface WorldSettings {
   deathPolicy: DeathPolicy;
   narratorModel: string;
   parserModel: string;
+  /** Hidden reasoning for the narrator; models that require it fall back to low. */
+  narratorReasoning: "off" | "low" | "default";
   contextTokens: number;
   /** Highest tier anyone normally reaches; the player is capped here unless unboundedPower is on. */
   powerCeiling: number;
@@ -50,8 +52,9 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   intensity: "explicit",
   limits: "",
   deathPolicy: "consequence",
-  narratorModel: "deepseek/deepseek-chat-v3-0324",
-  parserModel: "deepseek/deepseek-chat-v3-0324",
+  narratorModel: "z-ai/glm-5.3",
+  parserModel: "deepseek/deepseek-v4.1-flash-1017",
+  narratorReasoning: "off",
   contextTokens: 32000,
   powerCeiling: 6,
   unboundedPower: false,
@@ -61,11 +64,16 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   asides: false,
 };
 
+/** Former default; saves still pointing at it follow the current default. */
+const LEGACY_MODEL = "deepseek/deepseek-chat-v3-0324";
+
 const LEGACY_LENGTH: Record<string, number> = { short: 90, medium: 180, long: 350 };
 
 export function getSettings(store: WorldStore): WorldSettings {
   const s = { ...DEFAULT_SETTINGS, ...store.getMeta<Partial<WorldSettings>>("settings", {}) };
   if (typeof s.length !== "number") s.length = LEGACY_LENGTH[String(s.length)] ?? DEFAULT_SETTINGS.length;
+  if (s.narratorModel === LEGACY_MODEL) s.narratorModel = DEFAULT_SETTINGS.narratorModel;
+  if (s.parserModel === LEGACY_MODEL) s.parserModel = DEFAULT_SETTINGS.parserModel;
   return s;
 }
 

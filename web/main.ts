@@ -179,7 +179,7 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens"] as const;
 const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
