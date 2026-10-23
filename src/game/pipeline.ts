@@ -87,6 +87,8 @@ const OPS_HELP = `State changes: begin your reply with an <ops> block containing
 Record every physical change you narrate. Update each present NPC's emotions/thoughts when they change, within this turn's thought budget. Leave the block empty if nothing changed: <ops></ops>`;
 
 
+/** Resting, bathing or eating without sleeping or waiting for something rarely runs past two hours. */
+const QUIET_AWAKE_MINUTES = 120;
 const PACE_MINUTES: Record<Pace, number> = { quiet: 600, intimate: 120, social: 30, travel: 0, exploring: 30, investigating: 60, fighting: 10 };
 
 const ASIDE = /\b(as an ai|language model|author'?s note|ooc\b|out of character|(this|that) (scene|passage|story|turn) (is|was) (beautifully|masterfully|well)|well[- ]written|my (writing|prose)|i (hope|think) (you|this|that) (enjoy|like|work)|nailed it|chef'?s kiss)/i;
@@ -257,6 +259,56 @@ function uniqueId(store: WorldStore, kind: string, name: string): string {
   for (let i = 2; ; i++) if (!store.getEntity(`${base}-${i}`)) return `${base}-${i}`;
 }
 
+const GENERIC = new Set(["room", "area", "side", "back", "front", "inside", "outside", "there", "here", "place", "corner", "spot", "toward", "towards"]);
+const keyWords = (s: string) =>
+  normalizeName(s)
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 3 && !GENERIC.has(w));
+
+/** "something heavy approaching from the north" -> "something heavy": a name, not a sentence. */
+export function shortName(desc: string): string {
+  const s = desc
+    .replace(/^(?:the|a|an|some)\s+|\b(?:nearest|closest|other)\s+/gi, "")
+    .replace(/\s+(?:approaching|coming|moving|standing|sitting|from|in|on|at|near|with|by|off|behind|that|who|which)\b.*$/i, "");
+  return s.split(/\s+/).slice(0, 4).join(" ").slice(0, 80);
+}
+
+const nameKey = (s: string) =>
+  normalizeName(s.replace(/\s*\[[^\]]*\]/g, ""))
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * Narrator create_entity for someone or somewhere that already exists becomes a reference to the
+ * existing one, so a re-described teahouse or "Cutter [character:cutter]" doesn't fork the world.
+ */
+export function dedupeCreates(store: WorldStore, ops: unknown[]): unknown[] {
+  const remap = new Map<string, string>();
+  const out: unknown[] = [];
+  for (const raw of ops) {
+    const op = remap.size ? (JSON.parse(JSON.stringify(raw, (_, v: unknown) => (typeof v === "string" && remap.has(v) ? remap.get(v) : v))) as unknown) : raw;
+    const o = op as { op?: unknown; kind?: unknown; name?: unknown; id?: unknown; parent?: unknown };
+    if (o.op === "create_entity" && typeof o.name === "string") {
+      const name = o.name.replace(/\s*\[[^\]]*\]/g, "").trim() || o.name;
+      o.name = name;
+      const kind = o.kind;
+      if (kind === "character" || kind === "place" || kind === "room") {
+        const k = nameKey(name);
+        const same = store
+          .entitiesOfKind(kind)
+          .find((e) => (kind !== "room" || !o.parent || e.parent_id === o.parent) && [e.name, ...e.aliases].some((n) => nameKey(n) === k));
+        if (same) {
+          if (typeof o.id === "string") remap.set(o.id, same.id);
+          continue;
+        }
+      }
+    }
+    out.push(op);
+  }
+  return out;
+}
+
 /** Resolves a travel destination to an existing location, or creates it, so movement is recorded by code rather than left to prose. */
 export function travelOps(
   store: WorldStore,
@@ -296,6 +348,17 @@ export function travelOps(
     if (found.kind === "place") to = store.children(found.id).find((c) => c.kind === "room") ?? found;
     if (to.id === here.id || ancestors(store, here.id).some((a) => a.id === to.id && to.kind === "room")) return null;
     return { name: to.name, ops: [{ op: "move", id: playerId, to: to.id }, { op: "time_advance", minutes }] };
+  }
+  // "the longhouse door" or "the yard barrel" is a spot in a known room, not a new room.
+  const want = new Set(keyWords(destination));
+  const share = (e: Entity) => [e.name, ...e.aliases].some((x) => keyWords(x).some((w) => want.has(w)));
+  const allRooms = store.entitiesOfKind("room");
+  for (const pool of [building ? allRooms.filter((r) => ancestors(store, r.id).some((a) => a.id === building.id)) : [], allRooms]) {
+    const near = pool.filter(share);
+    const [only] = near;
+    if (near.length !== 1 || !only) continue;
+    if (only.id === here.id) return null;
+    return { name: only.name, ops: [{ op: "move", id: playerId, to: only.id }, { op: "time_advance", minutes }] };
   }
   const name = titleCase(destination.trim());
   if (scope === "same_building" && building) {
@@ -340,7 +403,7 @@ async function ensureOpponent(deps: GameDeps, s: WorldSettings, opponent: string
     draft = { ...known, props: { ...known.props, sheet } };
   } else {
     const me = store.getEntity(playerId);
-    const name = titleCase(opponent.replace(/^(?:the|a|an|some)\s+|\b(?:nearest|closest|other)\s+/gi, "")).slice(0, 80) || "Stranger";
+    const name = titleCase(shortName(opponent)) || "Stranger";
     id = uniqueId(store, "character", name);
     const props = { age: cast.age, description: opponent, sheet, group: cast.count && cast.count > 1 ? { count: cast.count } : null, thoughtfulness: cast.thoughtfulness ?? undefined };
     engineOps.push({ op: "create_entity", id, kind: "character", name, parent: me?.parent_id ?? null, zone: me ? (charProps(me).scene.zone ?? undefined) : undefined, props });
@@ -384,7 +447,7 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
 Empty arrays when nothing applies.`;
 
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
-async function reviewProse(deps: GameDeps, s: WorldSettings, prose: string, ops: unknown[], present: Entity[]): Promise<number> {
+async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose: string, ops: unknown[], present: Entity[]): Promise<number> {
   const { store, llm, playerId } = deps;
   const names = untrackedNames(store, prose, ops);
   const npcs = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
@@ -414,6 +477,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, prose: string, ops:
           "Known facts:",
           ...(known.length ? known.map((f) => `- ${f.text}`) : ["(none)"]),
           "",
+          ...(said ? [`Protagonist this turn: ${said}`, ""] : []),
           `Passage:\n${prose}`,
         ].join("\n"),
       },
@@ -503,7 +567,8 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       costUsd += parsed.cost;
       const p = parsed.value;
       pace = p.pace;
-      if (p.minutes) engineOps.push({ op: "time_advance", minutes: Math.min(p.minutes, PACE_MINUTES[p.pace]) });
+      const cap = p.pace === "quiet" && !/\b(?:sleep|slept|nap|doze|night|until|wait)/i.test(input) ? QUIET_AWAKE_MINUTES : PACE_MINUTES[p.pace];
+      if (p.minutes) engineOps.push({ op: "time_advance", minutes: Math.min(p.minutes, cap) });
       const me = store.getEntity(playerId);
       const restraint = me ? charProps(me).scene.relations.find((r) => RESTRAINT.test(r.type)) : undefined;
       const restrainer = restraint ? (store.getEntity(restraint.target)?.name ?? restraint.target) : null;
@@ -642,13 +707,14 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     messages.push({ role: "assistant", content: raw }, { role: "user", content: "Stay in character as the narrator and continue the story per the rules." });
   }
   const { ops: parsedOps, prose } = splitNarration(raw);
-  const narratorOps = limitThoughts(parsedOps.map((op) => resolveIds(store, op)), budgets);
+  const narratorOps = dedupeCreates(store, limitThoughts(parsedOps.map((op) => resolveIds(store, op)), budgets));
   const here = store.getEntity(playerId)?.parent_id ?? null;
   for (const op of narratorOps) {
     const o = op as { op?: unknown; kind?: unknown; parent?: unknown };
     if (o.op === "create_entity" && o.kind === "character" && !o.parent) o.parent = here;
   }
-  costUsd += await reviewProse(deps, settings, prose, narratorOps, present);
+  const said = kind === "say" ? `says "${input}"` : kind === "do" || kind === "story" ? input : "";
+  costUsd += await reviewProse(deps, settings, said, prose, narratorOps, present);
   costUsd += await rateNewCharacters(deps, settings, narratorOps);
   if (spawning) {
     const g = await spawning;

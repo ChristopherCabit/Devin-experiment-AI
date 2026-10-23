@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TurnLog } from "../src/engine/turns.js";
-import { playTurn, resolveIds, splitNarration, travelOps } from "../src/game/pipeline.js";
+import { dedupeCreates, playTurn, resolveIds, shortName, splitNarration, travelOps } from "../src/game/pipeline.js";
 import { applyOp } from "../src/ops/apply.js";
 import { PLAYER_ID, STARTER } from "../src/game/seeds.js";
 import type { ChatRequest } from "../src/llm/client.js";
@@ -188,6 +188,33 @@ describe("narration hygiene", () => {
     const { store } = game([]);
     applyOp(store, { op: "move", id: PLAYER_ID, to: "room:street" }, { source: "author", turn: 1 });
     expect(travelOps(store, PLAYER_ID, "the inn's common room", "elsewhere")?.ops[0]).toEqual({ op: "move", id: PLAYER_ID, to: "room:common" });
+  });
+
+  it("a loosely named known room ('the common hall') moves there instead of creating a room", () => {
+    const { store } = game([]);
+    applyOp(store, { op: "move", id: PLAYER_ID, to: "room:upstairs" }, { source: "author", turn: 1 });
+    expect(travelOps(store, PLAYER_ID, "the common hall", "same_building")?.ops).toEqual([
+      { op: "move", id: PLAYER_ID, to: "room:common" },
+      { op: "time_advance", minutes: 1 },
+    ]);
+  });
+
+  it("narrator re-creating an existing character or place reuses it", () => {
+    const { store } = game([]);
+    const ops = dedupeCreates(store, [
+      { op: "create_entity", id: "character:rook_2", kind: "character", name: "Rook [character:rook]" },
+      { op: "move", id: "character:rook_2", to: "room:yard" },
+      { op: "create_entity", id: "character:tam", kind: "character", name: "Tam [character:tam]" },
+    ]);
+    expect(ops).toEqual([
+      { op: "move", id: "character:rook", to: "room:yard" },
+      { op: "create_entity", id: "character:tam", kind: "character", name: "Tam" },
+    ]);
+  });
+
+  it("an unnamed opponent gets a short name, not the whole description", () => {
+    expect(shortName("something heavy approaching from the north off the track")).toBe("something heavy");
+    expect(shortName("the nearest guard")).toBe("guard");
   });
 
   it("a normal voice is not heard from another room; shouting carries; a self-introduced name becomes the player's alias", async () => {
