@@ -25,7 +25,7 @@ export interface WorldSettings {
   /** Scale for per-character inner-thought allowance: 0 off, 2 normal, 5 very introspective. */
   thoughtsPerTurn: number;
   /** Target size of each narration. */
-  length: "short" | "medium" | "long";
+  length: number;
   /** Allow the narrator to step out of the story for comments; off by default. */
   asides: boolean;
 }
@@ -57,12 +57,16 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   unboundedPower: false,
   progression: { practice: true, mentors: true, cultivation: null },
   thoughtsPerTurn: 2,
-  length: "medium",
+  length: 180,
   asides: false,
 };
 
+const LEGACY_LENGTH: Record<string, number> = { short: 90, medium: 180, long: 350 };
+
 export function getSettings(store: WorldStore): WorldSettings {
-  return { ...DEFAULT_SETTINGS, ...store.getMeta<Partial<WorldSettings>>("settings", {}) };
+  const s = { ...DEFAULT_SETTINGS, ...store.getMeta<Partial<WorldSettings>>("settings", {}) };
+  if (typeof s.length !== "number") s.length = LEGACY_LENGTH[String(s.length)] ?? DEFAULT_SETTINGS.length;
+  return s;
 }
 
 export const approxTokens = (s: string): number => Math.ceil(s.length / 4);
@@ -154,7 +158,16 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
   }
   lines.push("", ...characterBlock(store, player, true));
   for (const c of present) lines.push("", ...characterBlock(store, c, false));
-  const facts = store.facts().slice(-30);
+  const near = new Set<string>([
+    playerId,
+    ...store.children(playerId).map((c) => c.id),
+    ...(here ? [here.id, ...store.children(here.id).map((c) => c.id)] : []),
+    ...present.flatMap((c) => store.children(c.id).map((x) => x.id)),
+  ]);
+  const allFacts = store.facts();
+  const facts = [...new Map([...allFacts.filter((f) => f.subjects.some((x) => near.has(x))).slice(-40), ...allFacts.slice(-10)].map((f) => [f.id, f])).values()].sort(
+    (a, b) => a.id - b.id,
+  );
   if (facts.length) lines.push("", "Established facts:", ...facts.map((f) => `- ${f.text}`));
   const known = secrets(store).filter((x) => x.revealed);
   if (known.length) lines.push("", "Secrets the protagonist has uncovered:", ...known.map((x) => `- ${x.text}`));
@@ -163,14 +176,24 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
 
 /** Most recent turns that fit the character budget, oldest first. */
 export function recentStory(log: TurnLog, budgetTokens: number): string {
+  return storyWindow(log, budgetTokens).text;
+}
+
+/** The latest turns verbatim within budget, and the first turn number included. */
+export function storyWindow(log: TurnLog, budgetTokens: number): { text: string; from: number } {
   const parts: string[] = [];
   let used = 0;
-  for (const t of log.history(200).reverse()) {
-    if (t.kind === "author" || (t.kind === "system" && !t.output)) continue;
+  let from = log.lastTurn() + 1;
+  for (const t of log.history(400).reverse()) {
+    if (t.kind === "author" || (t.kind === "system" && !t.output)) {
+      from = t.n;
+      continue;
+    }
     const block = [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
     used += approxTokens(block);
     if (used > budgetTokens) break;
     parts.unshift(block);
+    from = t.n;
   }
-  return parts.join("\n\n");
+  return { text: parts.join("\n\n"), from };
 }

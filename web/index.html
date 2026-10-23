@@ -137,7 +137,9 @@
       <select id="s-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select>
     </label>
     <label>Narration length
-      <select id="s-length"><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select>
+      (words per turn; it stops earlier at a decision point)
+      <input id="s-length-range" type="range" min="30" max="800" step="10">
+      <input id="s-length" type="number" min="30" max="800" step="10">
     </label>
     <label><input id="s-asides" type="checkbox"> Allow narrator asides (out-of-character comments)</label>
     <label>World power (1-10) <input id="s-powerCeiling" type="number" min="1" max="10"></label>

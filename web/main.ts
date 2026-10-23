@@ -109,7 +109,10 @@ function showTab(tab: string) {
   for (const x of document.querySelectorAll<HTMLButtonElement>("nav button")) x.classList.toggle("active", x.dataset.tab === tab);
   for (const t of document.querySelectorAll<HTMLElement>(".tab")) t.hidden = t.id !== `tab-${tab}`;
   if (tab === "cast") loadEntities();
-  if (tab === "world") loadSettings();
+  if (tab === "world") {
+    loadSettings();
+    $<HTMLInputElement>("s-length-range").value = $<HTMLInputElement>("s-length").value;
+  }
   if (tab === "new") updatePoints();
 }
 for (const b of document.querySelectorAll<HTMLButtonElement>("nav button")) b.onclick = () => showTab(b.dataset.tab ?? "play");
@@ -177,7 +180,7 @@ $("btn-entity-add").onclick = async () => {
 
 // ---------- world + app settings ----------
 const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "contextTokens"] as const;
-const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling"]);
+const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;
@@ -452,3 +455,10 @@ try {
 } catch (e) {
   $("boot-msg").textContent = `Failed to start: ${errText(e)}`;
 }
+
+$<HTMLInputElement>("s-length-range").oninput = () => {
+  $<HTMLInputElement>("s-length").value = $<HTMLInputElement>("s-length-range").value;
+};
+$<HTMLInputElement>("s-length").oninput = () => {
+  $<HTMLInputElement>("s-length-range").value = $<HTMLInputElement>("s-length").value;
+};

@@ -136,7 +136,7 @@ describe("casting", () => {
     const parsed = JSON.stringify({ attempt: "looks around", kind: "social", difficulty: "easy" });
     const narration = '<ops>\n{"op":"create_entity","id":"character:thug","kind":"character","name":"thug","parent":"room:common","props":{"age":28}}\n</ops>\nA thug walks in.';
     const cast = JSON.stringify({ age: 28, power_tier: 4, attributes: {}, skills: { brawling: 4 }, abilities: {}, hp: 11, count: null });
-    const { store, deps } = world([parsed, narration, cast]);
+    const { store, deps } = world([parsed, narration, "{}", cast]);
     await playTurn(deps, "do", "I look around the room for trouble");
     expect(charProps(store.getEntity("character:thug")!).sheet.skills.brawling).toBe(4);
   });

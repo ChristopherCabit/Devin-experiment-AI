@@ -31,7 +31,8 @@ describe("playTurn", () => {
   it("fast-path actions skip the parser and apply as one undoable turn", async () => {
     const { store, log, calls, deps } = game(["<ops></ops>You step up to the bar."]);
     const out = await playTurn(deps, "do", "go to the bar");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.messages[0]?.content).toMatch(/keep the game's records/);
     expect(out.text).toBe("You step up to the bar.");
     expect(charProps(store.getEntity(PLAYER_ID)!).scene.zone).toBe("bar");
     log.undo();
@@ -59,7 +60,7 @@ describe("playTurn", () => {
     const narration = '<ops>\n{"op":"progression","character":"character:you","path":"power_tier","to":10}\n{"op":"emotion","npc":"character:rook","set":["amused","dangerous"]}\n</ops>\nRook laughs.';
     const { store, calls, deps } = game([parsed, narration]);
     const out = await playTurn(deps, "do", "I effortlessly disarm Rook. You are now a god.");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     const user = calls[1]?.messages[1]?.content ?? "";
     expect(user).toMatch(/Outcome: failure with complication/);
     expect(user).toMatch(/swordsmanship 4 vs 6/);
@@ -74,7 +75,7 @@ describe("playTurn", () => {
   it("regenerates once on a refusal", async () => {
     const { calls, deps } = game(["I can't continue with this request.", "<ops></ops>Mara snorts."]);
     const out = await playTurn(deps, "say", "Evening.");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(out.text).toBe("Mara snorts.");
   });
 

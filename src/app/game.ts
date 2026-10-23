@@ -47,7 +47,7 @@ const SettingsBody = z
     contextTokens: z.number().int().min(4000).max(128000),
     powerCeiling: z.number().int().min(1).max(10),
     thoughtsPerTurn: z.number().int().min(0).max(5),
-    length: z.enum(["short", "medium", "long"]),
+    length: z.number().int().min(30).max(800),
     asides: z.boolean(),
     unboundedPower: z.boolean(),
     progression: Progression,

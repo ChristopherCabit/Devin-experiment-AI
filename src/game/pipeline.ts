@@ -7,7 +7,8 @@ import { fastPath, normalizeName, RESTRAINT } from "../parser/fastpath.js";
 import { ancestors, charProps, slugify } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
-import { approxTokens, describeScene, getSettings, recentStory, type WorldSettings } from "./context.js";
+import { approxTokens, describeScene, getSettings, storyWindow, type WorldSettings } from "./context.js";
+import { chapterContext, updateChapters } from "./memory.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
@@ -85,11 +86,6 @@ const OPS_HELP = `State changes: begin your reply with an <ops> block containing
 {"op":"fact","text":str,"subjects":[ID]}  {"op":"time_advance","minutes":int}
 Record every physical change you narrate. Update each present NPC's emotions/thoughts when they change, within this turn's thought budget. Leave the block empty if nothing changed: <ops></ops>`;
 
-const LENGTH = {
-  short: { words: "about 60-120 words", tokens: 450 },
-  medium: { words: "about 120-250 words", tokens: 700 },
-  long: { words: "about 250-450 words", tokens: 1000 },
-} as const;
 
 const PACE_MINUTES: Record<Pace, number> = { quiet: 600, intimate: 120, social: 30, travel: 0, exploring: 30, investigating: 60, fighting: 10 };
 
@@ -130,7 +126,7 @@ Binding rules:
 - Leave subtext unspoken. Don't explain motives, don't summarise what a moment means, don't over-describe. Trust the reader.
 - Characters behave like real people with theory of mind: they consider how they come across and what others think, they can be guarded, awkward, inconsistent or mundane. Avoid cartoonish exaggeration unless the style explicitly calls for it.
 - Time passes realistically. Keep the time of day consistent with the clock in the scene state; actions take plausible time (a meal ~30-60 min, a conversation minutes). Never jump time without an explicit reason.
-- Length: ${LENGTH[s.length].words}. Stop at the first moment the protagonist would plausibly want to respond or choose; do not continue past it.
+- Length: about ${s.length} words; shorter is fine when the moment is brief. Stop at the first moment the protagonist would plausibly want to respond or choose; do not continue past it.
 
 ${OPS_HELP}`;
 }
@@ -342,44 +338,83 @@ export function untrackedNames(store: WorldStore, prose: string, ops: unknown[])
   return [...out].slice(0, 8);
 }
 
-const Untracked = z.object({
+const Review = z.object({
   characters: z
     .array(z.object({ name: z.string().min(1).max(80), description: z.string().max(400).catch(""), age: z.number().int().nullable().catch(null) }))
     .max(4)
     .catch([]),
+  details: z.array(z.object({ id: z.string(), add: z.string().min(1).max(200) })).max(6).catch([]),
+  facts: z.array(z.object({ text: z.string().min(1).max(300), subjects: z.array(z.string()).max(6).catch([]) })).max(4).catch([]),
 });
 
-/** Creates characters the narrator introduced in prose without a create_entity op, so they appear in the cast list and get stats. */
-async function trackUntracked(deps: GameDeps, s: WorldSettings, prose: string, ops: unknown[]): Promise<number> {
+const REVIEW_PROMPT = `You keep the game's records consistent with a story passage. Output JSON:
+{"characters":[{"name":str,"description":"one line from the passage","age":int|null}],
+ "details":[{"id":ID,"add":str}],
+ "facts":[{"text":str,"subjects":[ID]}]}
+- characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned).
+- details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
+- facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
+Empty arrays when nothing applies.`;
+
+/** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
+async function reviewProse(deps: GameDeps, s: WorldSettings, prose: string, ops: unknown[], present: Entity[]): Promise<number> {
   const { store, llm, playerId } = deps;
   const names = untrackedNames(store, prose, ops);
-  if (!names.length) return 0;
+  const npcs = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
+  if (!prose.trim() || (!names.length && !npcs.length)) return 0;
+  const ids = new Set(npcs.map((c) => c.id));
+  const known = store.facts().filter((f) => f.subjects.some((x) => ids.has(x) || x === playerId)).slice(-25);
+  const profile = (c: Entity) => {
+    const p = c.props as { description?: unknown; appearance?: unknown };
+    return `- ${c.name} [${c.id}]: ${String(p.description ?? "")}${p.appearance ? ` Appearance: ${String(p.appearance)}` : ""}`;
+  };
   const res = await llm.chat({
     model: s.parserModel,
     json: true,
-    maxTokens: 400,
+    maxTokens: 700,
     temperature: 0,
     messages: [
+      { role: "system", content: REVIEW_PROMPT },
       {
-        role: "system",
-        content:
-          'From the candidate words, pick those that name a person or creature physically present in this passage (not places, groups, deities, or people merely mentioned). Output JSON {"characters":[{"name":str,"description":"one line from the passage","age":int|null}]}, or {"characters":[]}.',
+        role: "user",
+        content: [
+          `Candidates: ${names.join(", ") || "(none)"}`,
+          "",
+          "Tracked characters here:",
+          ...(npcs.length ? npcs.map(profile) : ["(none)"]),
+          `Protagonist: [${playerId}]`,
+          "",
+          "Known facts:",
+          ...(known.length ? known.map((f) => `- ${f.text}`) : ["(none)"]),
+          "",
+          `Passage:\n${prose}`,
+        ].join("\n"),
       },
-      { role: "user", content: `Candidates: ${names.join(", ")}\n\nPassage:\n${prose}` },
     ],
   });
-  let found: z.output<typeof Untracked>["characters"] = [];
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [] };
   try {
-    found = Untracked.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim())).characters;
+    r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
-    /* treat as none */
+    /* treat as nothing to record */
   }
   const me = store.getEntity(playerId);
-  for (const c of found.filter((c) => names.includes(c.name))) {
+  for (const c of r.characters.filter((c) => names.includes(c.name))) {
     const props: Record<string, unknown> = { description: c.description };
     if (c.age !== null) props.age = c.age;
     ops.push({ op: "create_entity", id: uniqueId(store, "character", c.name), kind: "character", name: c.name, parent: me?.parent_id ?? null, zone: me ? (charProps(me).scene.zone ?? undefined) : undefined, props });
   }
+  const looks = new Map<string, string>();
+  for (const d of r.details) {
+    const c = npcs.find((x) => x.id === d.id);
+    if (!c) continue;
+    const old = looks.get(c.id) ?? String((c.props as { appearance?: unknown }).appearance ?? "");
+    if (!old.toLowerCase().includes(d.add.toLowerCase())) looks.set(c.id, (old ? `${old}; ${d.add}` : d.add).slice(-500));
+  }
+  for (const [id, appearance] of looks) ops.push({ op: "update_character", id, appearance });
+  const seen = new Set(store.facts().map((f) => f.text.toLowerCase()));
+  const exists = (x: string) => store.getEntity(x) !== null;
+  for (const f of r.facts) if (!seen.has(f.text.toLowerCase())) ops.push({ op: "fact", text: f.text, subjects: f.subjects.filter(exists) });
   return res.costUsd;
 }
 
@@ -538,8 +573,13 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   const spawning = spawnAt ? generateSecret(llm, settings, scene, spawnAt, present).catch(() => ({ op: null, cost: 0 })) : null;
   const system = narratorSystem(settings, settings.intensity === "explicit" ? underageConcern(present) : null);
   const fixed = approxTokens(system) + approxTokens(scene) + 1200;
-  const story = recentStory(log, Math.max(1000, settings.contextTokens - fixed - 600));
+  const memBudget = Math.min(2500, Math.floor(settings.contextTokens * 0.15));
+  const win = storyWindow(log, Math.max(1000, settings.contextTokens - fixed - 600 - memBudget));
+  const story = win.text;
+  const room = store.getEntity(store.getEntity(playerId)?.parent_id ?? "");
+  const memory = chapterContext(store, log, win.from, [...present.flatMap((c) => [c.name, ...c.aliases]), ...(room ? [room.name] : [])], memBudget);
   const user = [
+    ...(memory ? ["## Earlier chapters (summaries; established canon)", memory, ""] : []),
     "## Story so far",
     story || "(This is the opening of the story.)",
     "",
@@ -561,7 +601,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   ];
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: (LENGTH[settings.length] ?? LENGTH.medium).tokens + 300, temperature: 0.85 });
+    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85 });
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;
@@ -575,7 +615,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     const o = op as { op?: unknown; kind?: unknown; parent?: unknown };
     if (o.op === "create_entity" && o.kind === "character" && !o.parent) o.parent = here;
   }
-  costUsd += await trackUntracked(deps, settings, prose, narratorOps);
+  costUsd += await reviewProse(deps, settings, prose, narratorOps, present);
   costUsd += await rateNewCharacters(deps, settings, narratorOps);
   if (spawning) {
     const g = await spawning;
@@ -592,6 +632,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     ],
   });
   const rejected = results.filter((r) => !r.ok).map((r) => (r.ok ? "" : r.reason));
+  costUsd += await updateChapters(store, log, llm, settings.parserModel).catch(() => 0);
   return { turn, text: prose, interpreted, rejected, costUsd };
 }
 
