@@ -100,6 +100,7 @@ export const Op = z.discriminatedUnion("op", [
     })
     .strict(),
   z.object({ op: z.literal("reference"), subject: z.string().trim().min(1).max(120), note: z.string().trim().min(1).max(1500) }).strict(),
+  z.object({ op: z.literal("retract_fact"), id: z.number().int().positive() }).strict(),
   z.object({ op: z.literal("merge_entity"), from: EntityId, into: EntityId }).strict(),
   z.object({ op: z.literal("appointment_update"), text: z.string().trim().min(1).max(200), status: z.enum(["moved", "cancelled", "done"]), at: z.number().int().min(0).nullable().default(null) }).strict(),
   z.object({ op: z.literal("appointment"), text: z.string().trim().min(1).max(200), at: z.number().int().min(0), who: z.array(EntityId).default([]) }).strict(),

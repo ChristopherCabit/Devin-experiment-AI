@@ -427,6 +427,13 @@ async function ensureOpponent(deps: GameDeps, s: WorldSettings, opponent: string
 }
 
 /** Capitalised mid-sentence words in the prose that match no entity: possible characters the narrator forgot to create. */
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Characters any of whose names appear in `text`. */
+export function namedIn(store: WorldStore, text: string): Entity[] {
+  return store.entitiesOfKind("character").filter((c) => [c.name, ...c.aliases].some((n) => n.trim().length > 1 && new RegExp(`\\b${escapeRe(n.trim())}\\b`, "i").test(text)));
+}
+
 export function untrackedNames(store: WorldStore, prose: string, ops: unknown[]): string[] {
   const known = new Set<string>();
   const add = (s: unknown) => {
@@ -522,6 +529,8 @@ const Review = z.object({
     .array(z.object({ id: z.string(), name: z.string().min(1).max(80) }))
     .max(4)
     .catch([]),
+  same_person: z.array(z.object({ from: z.string(), into: z.string() })).max(4).catch([]),
+  retract_facts: z.array(z.number().int()).max(6).catch([]),
   schedule_changes: z
     .array(z.object({ text: z.string().min(1).max(200), change: z.enum(["moved", "cancelled", "done"]), time: z.string().max(5).nullable().catch(null), days_ahead: z.number().int().min(0).max(30).catch(0) }))
     .max(2)
@@ -546,8 +555,12 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
  "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}],
  "appointments":[{"text":str,"time":"HH:MM","days_ahead":int,"who":[ID]}],
  "schedule_changes":[{"text":str,"change":"moved"|"cancelled"|"done","time":"HH:MM"|null,"days_ahead":int}],
- "aliases":[{"id":ID,"name":str}]}
+ "aliases":[{"id":ID,"name":str}],
+ "same_person":[{"from":ID,"into":ID}],
+ "retract_facts":[int]}
 - characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them. Never another name for a tracked character (see aliases).
+- same_person: only when the Player corrections say two tracked characters are one person. from: the copy; into: the one to keep (the original, usually the one under her real name). Never otherwise.
+- retract_facts: numbers (#n) of Known facts that the Player corrections contradict. Never otherwise.
 - aliases: a Candidate that is another name for a Tracked character here: nickname, pet name, surname, title, code name, or a name someone calls them. Put it here, never in characters. Usually none.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
@@ -562,9 +575,11 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
   const { store, llm, playerId } = deps;
   const names = untrackedNames(store, prose, ops);
   const npcs = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
-  if (!prose.trim() || (!names.length && !npcs.length && !(s.threads && HOOK.test(`${said} ${prose}`)))) return 0;
+  const corr = s.corrections.trim();
+  const named = corr ? namedIn(store, corr).filter((c) => c.id !== playerId) : [];
+  if (!prose.trim() || (!names.length && !npcs.length && named.length < 2 && !(s.threads && HOOK.test(`${said} ${prose}`)))) return 0;
   const openThreads = s.threads ? threads(store).filter((t) => t.status === "open").slice(-12) : [];
-  const ids = new Set(npcs.map((c) => c.id));
+  const ids = new Set([...npcs, ...named].map((c) => c.id));
   const known = store.facts().filter((f) => f.subjects.some((x) => ids.has(x) || x === playerId)).slice(-25);
   const profile = (c: Entity) => {
     const p = c.props as { description?: unknown; appearance?: unknown };
@@ -589,8 +604,9 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
           ...(npcs.length ? npcs.map(profile) : ["(none)"]),
           `Protagonist: [${playerId}]`,
           "",
+          ...(named.length ? ["Characters the corrections name:", ...named.map((c) => `- [${c.id}] ${c.name}${c.aliases.length ? ` (aka ${c.aliases.join(", ")})` : ""}, at ${store.getEntity(c.parent_id ?? "")?.name ?? "nowhere"}`), ""] : []),
           "Known facts:",
-          ...(known.length ? known.map((f) => `- ${f.text}`) : ["(none)"]),
+          ...(known.length ? known.map((f) => `- (#${f.id}) ${f.text}`) : ["(none)"]),
           "",
           ...(s.threads ? ["Open threads:", ...(openThreads.length ? openThreads.map((t) => `- [${t.id}] ${t.title}: ${t.text}`) : ["(none)"]), ""] : []),
           ...(said ? [`Protagonist this turn: ${said}`, ""] : []),
@@ -599,7 +615,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [], schedule_changes: [], aliases: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [], schedule_changes: [], aliases: [], same_person: [], retract_facts: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
@@ -627,6 +643,21 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
     const hit = findAppointment(store, c.text);
     const at = c.change === "moved" && c.time ? appointmentAt(clockMinutes(store), c.time, c.days_ahead) : null;
     if (hit && (c.change !== "moved" || (at !== null && at !== hit.at))) ops.push({ op: "appointment_update", text: hit.text, status: c.change, at });
+  }
+  if (corr) {
+    const strip = (x: string) => x.replace(/^\[|\]$/g, "");
+    const ok = new Set(named.map((c) => c.id));
+    const froms = new Set<string>();
+    const intos = new Set<string>();
+    for (const m of r.same_person) {
+      const from = strip(m.from);
+      const into = strip(m.into);
+      if (from === into || !ok.has(from) || !ok.has(into) || froms.has(from) || froms.has(into) || intos.has(from)) continue;
+      froms.add(from);
+      intos.add(into);
+      ops.push({ op: "merge_entity", from, into });
+    }
+    for (const id of r.retract_facts) if (known.some((f) => f.id === id)) ops.push({ op: "retract_fact", id });
   }
   const aliased = new Set<string>();
   for (const a of r.aliases) {
@@ -865,6 +896,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     background ? `\n${background}` : "",
     refs ? `\n${refs}` : "",
     hint ? `\n## Hidden from the protagonist\n${hintText(store, hint.secret)}` : "",
+    settings.corrections.trim() ? `\n## PLAYER CORRECTIONS (obey these over everything above, including the story so far, earlier chapters and the scene state; write as if they were always true)\n${settings.corrections.trim()}` : "",
   ].join("\n");
 
   const messages: ChatMessage[] = [
@@ -893,6 +925,9 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   const arriving = new Set(engineOps.flatMap((o) => (o.op === "reference" ? [o.subject.toLowerCase()] : [])));
   found.splice(0, found.length, ...found.filter((l) => !arriving.has(l.subject.toLowerCase())));
   costUsd += await rateNewCharacters(deps, settings, narratorOps);
+  const FIXES = new Set(["merge_entity", "retract_fact"]);
+  const fixes = narratorOps.filter((o) => FIXES.has(String((o as { op?: unknown }).op))) as OpInput[];
+  narratorOps.splice(0, narratorOps.length, ...narratorOps.filter((o) => !FIXES.has(String((o as { op?: unknown }).op))));
   if (spawning) {
     const g = await spawning;
     costUsd += g.cost;
@@ -905,10 +940,11 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     batches: [
       { source: "engine", ops: engineOps },
       { source: "narrator", ops: narratorOps },
+      { source: "engine", ops: fixes },
     ],
   });
   const rejected = results.filter((r) => !r.ok).map((r) => (r.ok ? "" : r.reason));
-  costUsd += await updateChapters(store, log, llm, settings.parserModel).catch(() => 0);
+  costUsd += await updateChapters(store, log, llm, settings.parserModel, settings.corrections).catch(() => 0);
   if (found.length && references(store).length < settings.researchMax)
     lookups.set(store, { turn, p: Promise.all(found.map((l) => lookUp(llm, settings.parserModel, l).catch(() => ({ ops: [], cost: 0 })))).then((rs) => ({ ops: rs.flatMap((x) => x.ops), cost: rs.reduce((n, x) => n + x.cost, 0) })) });
   if (lifeDue(store, settings)) periods.set(store, { turn, p: simulatePeriod(store, llm, settings, playerId, story.slice(-4000), rng).catch(() => ({ ops: [], cost: 0 })) });

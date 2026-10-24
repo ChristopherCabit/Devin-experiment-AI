@@ -290,8 +290,15 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       return {};
     }
 
+    case "retract_fact": {
+      if (ctx.source === "narrator") fail("the narrator cannot retract facts");
+      if (!store.facts().some((f) => f.id === op.id)) fail(`no fact #${op.id}`);
+      store.deleteFact(op.id);
+      return {};
+    }
+
     case "merge_entity": {
-      if (ctx.source !== "author") fail("only the author can merge");
+      if (ctx.source === "narrator") fail("the narrator cannot merge");
       const from = need(store, op.from);
       const into = need(store, op.into);
       if (from.id === into.id) fail("cannot merge something into itself");

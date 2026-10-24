@@ -36,7 +36,7 @@ export function validChapters(store: WorldStore, log: TurnLog): Chapter[] {
 }
 
 /** Summarises the turns since the last chapter once there are enough of them. Returns cost. */
-export async function updateChapters(store: WorldStore, log: TurnLog, llm: Chat, model: string): Promise<number> {
+export async function updateChapters(store: WorldStore, log: TurnLog, llm: Chat, model: string, corrections = ""): Promise<number> {
   const chapters = validChapters(store, log);
   if (chapters.length !== store.getMeta<Chapter[]>(KEY, []).length) store.setMeta(KEY, chapters);
   const last = chapters.at(-1)?.to ?? 0;
@@ -53,7 +53,8 @@ export async function updateChapters(store: WorldStore, log: TurnLog, llm: Chat,
       {
         role: "system",
         content:
-          'Summarise this chapter of an interactive story as long-term memory for its narrator. At most 120 words, past tense, the protagonist is "you". Keep concrete facts a later scene must not contradict: who did and said what, promises, debts, changes in relationships, injuries, where items were left and why, names, unresolved threads. No commentary, no style.',
+          'Summarise this chapter of an interactive story as long-term memory for its narrator. At most 120 words, past tense, the protagonist is "you". Keep concrete facts a later scene must not contradict: who did and said what, promises, debts, changes in relationships, injuries, where items were left and why, names, unresolved threads. No commentary, no style.' +
+          (corrections.trim() ? ` The player's corrections override the chapter where they conflict; summarise as if they were always true: ${corrections.trim()}` : ""),
       },
       { role: "user", content: `${chapters.length ? `Previous chapter: ${chapters.at(-1)?.text}\n\n` : ""}Chapter:\n${text}` },
     ],

@@ -55,6 +55,36 @@ describe("one character, many names", () => {
   });
 });
 
+describe("corrections fix the records", () => {
+  it("merges characters the corrections call one person and retracts facts they contradict", async () => {
+    const { store, log, deps } = world((req) =>
+      isReview(req)
+        ? JSON.stringify({ same_person: [{ from: "[character:joy]", into: "[character:mara]" }, { from: "character:wednesday", into: "character:mara" }, { from: "character:rook", into: "character:mara" }], retract_facts: [1] })
+        : "<ops></ops>Mara nods.",
+    );
+    const mara = store.getEntity("character:mara");
+    if (!mara) throw new Error("no Mara");
+    store.putEntity({ ...mara, id: "character:joy", name: "Joy", aliases: [], parent_id: null });
+    store.putEntity({ ...mara, id: "character:wednesday", name: "Wednesday", aliases: [], parent_id: null });
+    store.addFact("Joy is Mara's sister", ["character:joy"], 0);
+    store.setMeta("settings", { ...getSettings(store), corrections: "Mara is also called Joy and Wednesday; one person, and she has no sister." });
+    await playTurn(deps, "say", "Evening.");
+    expect(store.getEntity("character:joy")).toBeNull();
+    expect(store.getEntity("character:wednesday")).toBeNull();
+    expect(store.getEntity("character:rook")).not.toBeNull();
+    expect(store.getEntity("character:mara")?.aliases).toContain("Joy");
+    expect(store.facts().some((f) => /sister/.test(f.text))).toBe(false);
+    log.undo();
+    expect(store.getEntity("character:joy")?.name).toBe("Joy");
+  });
+
+  it("does nothing without corrections", async () => {
+    const { store, deps } = world((req) => (isReview(req) ? JSON.stringify({ same_person: [{ from: "character:rook", into: "character:mara" }] }) : "<ops></ops>Mara nods."));
+    await playTurn(deps, "say", "Evening.");
+    expect(store.getEntity("character:rook")).not.toBeNull();
+  });
+});
+
 describe("renames", () => {
   it("the narrator cannot rename someone to another character's name", () => {
     const { store } = world(() => "");
