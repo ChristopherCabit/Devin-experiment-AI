@@ -12,11 +12,14 @@ export class MusicPlayer {
 
   constructor() {
     // WebViews only start audio after a user gesture; resume on any tap or key so later tracks can play.
-    const unlock = () => void this.ctx?.resume().catch(() => undefined);
+    const unlock = () => this.resume();
     addEventListener("pointerdown", unlock);
     addEventListener("keydown", unlock);
+    const back = () => (document.hidden ? undefined : this.resume());
     document.addEventListener("visibilitychange", () => (document.hidden ? this.pause() : this.resume()));
     addEventListener("pagehide", () => this.pause());
+    addEventListener("pageshow", back);
+    addEventListener("focus", back);
   }
 
   get volume(): number {
@@ -101,8 +104,11 @@ export class MusicPlayer {
   }
 
   private resume() {
-    if (!this.ctx || !this.key) return;
-    void this.ctx.resume().then(() => this.arm(), () => undefined);
+    const ctx = this.ctx;
+    if (!ctx || !this.key || document.hidden) return;
+    if (ctx.state === "running") return this.arm();
+    // Android may refuse until the next tap; the tap listener calls this again.
+    void ctx.resume().then(() => this.arm(), () => undefined);
   }
 
   private fadeAll() {
