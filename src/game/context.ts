@@ -48,6 +48,10 @@ export interface WorldSettings {
   worldEventDays: number;
   /** How far and fast news travels. */
   connectedness: "isolated" | "regional" | "global";
+  /** Generated instrumental background music (off by default; not zero-data-retention). */
+  music: boolean;
+  musicStyle: string;
+  musicModel: string;
 }
 
 export const Progression = z.object({
@@ -89,6 +93,9 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   worldEvents: true,
   worldEventDays: 7,
   connectedness: "regional",
+  music: false,
+  musicStyle: "",
+  musicModel: "google/lyria-3-clip-preview",
 };
 
 /** Former default; saves still pointing at it follow the current default. */

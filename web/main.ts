@@ -1,3 +1,4 @@
+import { MusicPlayer } from "./music.js";
 import { Game, type GameState } from "../src/app/game.js";
 import { initSqlite } from "../src/db/sqlite.js";
 import type { PlayKind, TurnOutput } from "../src/game/pipeline.js";
@@ -48,8 +49,20 @@ function busy(on: boolean) {
   for (const id of ["btn-send", "btn-undo", "btn-retry"]) $<HTMLButtonElement>(id).disabled = on;
 }
 
+const music = new MusicPlayer();
+const lastText = () => game.state().turns.filter((t) => t.output).at(-1)?.output ?? "";
+/** Asks for the passage's track in the background; play continues while it generates. */
+function cueMusic(text: string, force = false) {
+  if (!game.settings().music) return music.stop();
+  game
+    .music(text, force)
+    .then((t) => t && music.play(t.key, t.audio))
+    .catch(() => undefined);
+}
+
 function showTurn(out: TurnOutput & { state: GameState }) {
   render(out.state);
+  cueMusic(out.text);
   loadEntities();
   $("interpreted").textContent = [out.interpreted ? `Interpreted as: ${out.interpreted}` : "", out.rejected.some((r) => !/engine|sheets are set/.test(r)) ? `Engine rejected: ${out.rejected.filter((r) => !/engine|sheets are set/.test(r)).join("; ")}` : ""]
     .filter(Boolean)
@@ -200,8 +213,8 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness"] as const;
-const BOOLS = new Set<string>(["unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "music", "musicStyle", "musicModel"] as const;
+const BOOLS = new Set<string>(["music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
 const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
@@ -224,6 +237,7 @@ $("btn-settings-save").onclick = async () => {
   if (body.unboundedPower && !game.settings().unboundedPower && !confirm("Turn on unbounded power? Your character's stats will no longer be capped.")) return;
   try {
     await game.updateSettings(body);
+    cueMusic(lastText(), true);
     say("Saved.");
     render(game.state());
   } catch (e) {
@@ -271,6 +285,7 @@ function loadSaves() {
     if (!s.active)
       add("Load", async () => {
         render(await game.loadSave(s.id), true);
+        cueMusic(lastText(), true);
         loadSettings();
         say(`Loaded ${s.name}.`);
       });
@@ -474,6 +489,9 @@ try {
   $("boot-msg").hidden = true;
   $("app").hidden = false;
   render(game.state(), true);
+  cueMusic(lastText(), true);
+  $<HTMLInputElement>("m-volume").value = String(music.volume);
+  $<HTMLInputElement>("m-volume").oninput = () => music.setVolume(Number($<HTMLInputElement>("m-volume").value));
 } catch (e) {
   $("boot-msg").textContent = `Failed to start: ${errText(e)}`;
 }

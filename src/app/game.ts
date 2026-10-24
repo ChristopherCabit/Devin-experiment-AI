@@ -1,3 +1,5 @@
+import { MusicDirector, tagScene, type Track } from "../game/music.js";
+import { generateMusic } from "../llm/music.js";
 import { z } from "zod";
 import { TurnLog } from "../engine/turns.js";
 import { DEATH_POLICIES, DEFAULT_SETTINGS, getSettings, Progression, type WorldSettings } from "../game/context.js";
@@ -59,6 +61,9 @@ const SettingsBody = z
     worldEvents: z.boolean(),
     worldEventDays: z.number().min(0.5).max(365),
     connectedness: z.enum(["isolated", "regional", "global"]),
+    music: z.boolean(),
+    musicStyle: z.string().max(120),
+    musicModel: z.string().min(1).max(120),
     unboundedPower: z.boolean(),
     progression: Progression,
   })
@@ -90,6 +95,8 @@ export interface GameOptions {
   fetch?: FetchLike;
   /** Replaces the OpenRouter client (tests). */
   llm?: (meter: SpendMeter) => Llm;
+  /** Replaces music generation (tests). */
+  music?: typeof generateMusic;
 }
 
 export type GameState = ReturnType<Game["state"]>;
@@ -100,6 +107,7 @@ export type GameState = ReturnType<Game["state"]>;
  */
 export class Game {
   private busy: Promise<unknown> = Promise.resolve();
+  private director: MusicDirector | null = null;
 
   private constructor(
     readonly saves: SaveManager,
@@ -189,6 +197,24 @@ export class Game {
       const llm = this.llm();
       return playTurn({ ...this.W, llm, playerId: PLAYER_ID, ...(onText ? { onText } : {}) }, b.kind, b.input ?? "");
     });
+  }
+
+  /** The background track for a passage, or null to keep the current one. Runs outside the turn queue and never changes the save. */
+  async music(passage: string, force = false): Promise<Track | null> {
+    const s = getSettings(this.W.store);
+    const apiKey = this.saves.getMeta(KEY);
+    if (!s.music || !passage.trim() || (!apiKey && !this.opts.llm)) return null;
+    this.director ??= new MusicDirector(this.opts.files);
+    const llm = this.llm();
+    return this.director.next(
+      passage,
+      {
+        style: s.musicStyle,
+        tag: (p) => tagScene(llm, s.parserModel, p),
+        generate: (prompt) => (this.opts.music ?? generateMusic)({ apiKey: String(apiKey), meter: this.meter, fetch: this.opts.fetch, model: s.musicModel, prompt }),
+      },
+      force,
+    );
   }
 
   private undoAllowed() {
