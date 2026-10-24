@@ -19,7 +19,7 @@ function clockText(m: number) {
 function render(s: GameState, jump = false) {
   $("title").textContent = s.settings.title;
   const hp = s.sheet?.resources?.hp as { value: number; max?: number } | undefined;
-  $("status").textContent = [s.location, s.zone, clockText(s.clock), hp ? `HP ${hp.value}/${hp.max ?? "?"}` : null, ...s.conditions].filter(Boolean).join(" · ");
+  $("status").textContent = [clockText(s.clock), s.location, s.zone, hp ? `HP ${hp.value}/${hp.max ?? "?"}` : null, ...s.conditions].filter(Boolean).join(" · ");
   const story = $("story");
   story.replaceChildren();
   for (const t of s.turns) {
