@@ -85,6 +85,18 @@ describe("corrections fix the records", () => {
   });
 });
 
+describe("name stutters", () => {
+  it("restores stuttered spellings of tracked names only", async () => {
+    const { store } = world(() => "");
+    const { nameFixer } = await import("../src/game/pipeline.js");
+    const mara = store.getEntity("character:mara");
+    if (!mara) throw new Error("no Mara");
+    store.putEntity({ ...mara, id: "character:ella", name: "Ella", aliases: [] });
+    const fix = nameFixer(store);
+    expect(fix("Eella smiles. Ellla's cup, Maara and Mara. Ela waves; Bella too.")).toBe("Ella smiles. Ella's cup, Mara and Mara. Ela waves; Bella too.");
+  });
+});
+
 describe("renames", () => {
   it("the narrator cannot rename someone to another character's name", () => {
     const { store } = world(() => "");

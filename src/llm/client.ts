@@ -100,15 +100,17 @@ export class LlmClient {
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     if (this.opts.meter.status().blocked) throw new SpendCapError();
+    const sent = LlmClient.requestBody(req);
+    const triedOff = (sent.reasoning as { enabled?: boolean } | undefined)?.enabled === false;
     const res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.opts.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify(LlmClient.requestBody(req)),
+      body: JSON.stringify(sent),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (req.onText && res.ok && res.body) return this.readStream(req.onText, res.body);
     const body = (await res.json().catch(() => ({}))) as CompletionBody;
-    if (res.status === 400 && (req.reasoning ?? "off") === "off" && /reasoning is mandatory/i.test(String(body.error?.message)) && !LlmClient.mandatoryReasoning.has(req.model)) {
+    if (res.status === 400 && triedOff && /reasoning is mandatory/i.test(String(body.error?.message))) {
       LlmClient.mandatoryReasoning.add(req.model);
       return this.chat(req);
     }

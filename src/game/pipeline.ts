@@ -434,6 +434,32 @@ export function namedIn(store: WorldStore, text: string): Entity[] {
   return store.entitiesOfKind("character").filter((c) => [c.name, ...c.aliases].some((n) => n.trim().length > 1 && new RegExp(`\\b${escapeRe(n.trim())}\\b`, "i").test(text)));
 }
 
+/**
+ * Fixes stuttered spellings of tracked names ("Eella", "Ellla" for Ella) that some providers
+ * occasionally emit; left alone they get copied forward or become new characters.
+ */
+export function nameFixer(store: WorldStore): (prose: string) => string {
+  const squash = (w: string) => w.toLowerCase().replace(/(.)\1+/g, "$1");
+  const known = new Set<string>();
+  const canon = new Map<string, string | null>();
+  for (const e of store.allEntities())
+    for (const n of [e.name, ...e.aliases])
+      for (const w of n.split(/[^A-Za-z]+/)) {
+        if (!w) continue;
+        known.add(w.toLowerCase());
+        if (w.length < 3 || !/^[A-Z]/.test(w)) continue;
+        const k = squash(w);
+        const prev = canon.get(k);
+        canon.set(k, prev === undefined || prev === w ? w : null);
+      }
+  return (prose) =>
+    prose.replace(/\b[A-Z][a-z]{2,}\b/g, (w) => {
+      if (known.has(w.toLowerCase())) return w;
+      const c = canon.get(squash(w));
+      return c && w.length > c.length ? c : w;
+    });
+}
+
 export function untrackedNames(store: WorldStore, prose: string, ops: unknown[]): string[] {
   const known = new Set<string>();
   const add = (s: unknown) => {
@@ -899,20 +925,23 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     settings.corrections.trim() ? `\n## PLAYER CORRECTIONS (obey these over everything above, including the story so far, earlier chapters and the scene state; write as if they were always true)\n${settings.corrections.trim()}` : "",
   ].join("\n");
 
+  const fixNames = nameFixer(store);
   const messages: ChatMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
   ];
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(deps.onText ? { onText: (t: string) => deps.onText?.(visibleProse(t)) } : {}) });
+    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(deps.onText ? { onText: (t: string) => deps.onText?.(fixNames(visibleProse(t))) } : {}) });
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;
     if (!REFUSAL.test(draft) && (settings.asides || !ASIDE.test(draft))) break;
     messages.push({ role: "assistant", content: raw }, { role: "user", content: "Stay in character as the narrator and continue the story per the rules." });
   }
-  const { ops: parsedOps, prose } = splitNarration(raw);
+  const split = splitNarration(raw);
+  const parsedOps = split.ops;
+  const prose = fixNames(split.prose);
   const narratorOps = dedupeCreates(store, limitThoughts(parsedOps.filter((op) => !(waitLanded && (op as { op?: unknown }).op === "time_advance")).map((op) => resolveIds(store, op)), budgets));
   const here = store.getEntity(playerId)?.parent_id ?? null;
   for (const op of narratorOps) {
