@@ -1,5 +1,5 @@
 import type { WorldStore } from "./store.js";
-import {
+import { Appointment,
   Secret, Thread, WorldEvent,
   CharacterProps,
   ItemProps,
@@ -112,6 +112,8 @@ export function canSee(store: WorldStore, viewerId: string, targetId: string): b
   if (target?.kind === "character" && charProps(target).scene.hidden) return false;
   return !blockedByClosed(store, targetId, lv.id);
 }
+
+export const appointments = (store: WorldStore): Appointment[] => Appointment.array().catch([]).parse(store.getMeta<unknown>("appointments", []));
 
 export const threads = (store: WorldStore): Thread[] => Thread.array().catch([]).parse(store.getMeta<unknown>("threads", []));
 export const worldEvents = (store: WorldStore): WorldEvent[] => WorldEvent.array().catch([]).parse(store.getMeta<unknown>("world_events", []));

@@ -171,6 +171,15 @@ export const Thread = z.object({
 });
 export type Thread = z.infer<typeof Thread>;
 
+/** Something set for a clock time ("dinner at seven"). `at` is in clock minutes. */
+export const Appointment = z.object({
+  text: z.string().min(1).max(200),
+  at: z.number().int(),
+  who: z.array(EntityId).default([]),
+  created_turn: z.number().int().default(0),
+});
+export type Appointment = z.infer<typeof Appointment>;
+
 export const REACHES = ["local", "regional", "world"] as const;
 /** Something happening in the wider world. News of it spreads from its origin at a pace set by the world's connectedness. */
 export const WorldEvent = z.object({

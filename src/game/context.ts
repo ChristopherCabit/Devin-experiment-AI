@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { TurnLog } from "../engine/turns.js";
-import { charProps, clockMinutes, itemProps, roomProps, secrets } from "../world/queries.js";
+import { appointments, charProps, clockMinutes, itemProps, roomProps, secrets } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
 
@@ -117,12 +117,43 @@ export function getSettings(store: WorldStore): WorldSettings {
 
 export const approxTokens = (s: string): number => Math.ceil(s.length / 4);
 
-function clock(store: WorldStore): string {
-  const m = clockMinutes(store);
+const PART_OF_DAY: [number, string][] = [[5, "late night"], [8, "early morning"], [12, "morning"], [14, "midday"], [17, "afternoon"], [20, "evening"], [23, "night"], [24, "late night"]];
+
+export function clockAt(m: number): string {
   const day = Math.floor(m / 1440) + 1;
   const hh = String(Math.floor((m % 1440) / 60)).padStart(2, "0");
   const mm = String(m % 60).padStart(2, "0");
   return `Day ${day}, ${hh}:${mm}`;
+}
+
+function clock(store: WorldStore): string {
+  const m = clockMinutes(store);
+  const h = Math.floor((m % 1440) / 60);
+  return `${clockAt(m)} (${PART_OF_DAY.find(([end]) => h < end)?.[1] ?? "night"})`;
+}
+
+/** Clock minutes for a stated "HH:MM" `days` ahead. A 12-hour reading that has already passed today means the later one (dinner at 7:00 seen at 15:00 is 19:00); otherwise a passed time means tomorrow. */
+export function appointmentAt(now: number, time: string, days: number): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 24 || min > 59) return null;
+  let at = Math.floor(now / 1440) * 1440 + days * 1440 + (h % 24) * 60 + min;
+  if (days === 0 && at < now - 30 && h < 12 && at + 720 >= now - 30) at += 720;
+  else if (days === 0 && at < now - 30) at += 1440;
+  return at;
+}
+
+const until = (d: number) => (d >= 60 ? `in ${Math.floor(d / 60)} h ${d % 60} min` : d > 5 ? `in ${d} min` : d >= -5 ? "now" : `${-d} min ago`);
+
+/** Upcoming (and just-missed) scheduled things, for the scene state. */
+export function scheduleLines(store: WorldStore): string[] {
+  const now = clockMinutes(store);
+  return appointments(store)
+    .filter((a) => a.at >= now - 120 && a.at <= now + 2880)
+    .slice(0, 4)
+    .map((a) => `Scheduled: ${a.text} at ${clockAt(a.at)} (${until(a.at - now)})`);
 }
 
 const SPEC_SKIP = new Set(["is_player", "scene", "mind", "sheet", "age"]);
@@ -183,7 +214,7 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
   const player = store.getEntity(playerId);
   if (!player) throw new Error("no player");
   const here = player.parent_id ? store.getEntity(player.parent_id) : null;
-  const lines = [`Time: ${clock(store)}`];
+  const lines = [`Time: ${clock(store)}`, ...scheduleLines(store)];
   const present: Entity[] = [];
   if (here) {
     const path: string[] = [];

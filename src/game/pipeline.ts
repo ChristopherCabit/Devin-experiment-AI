@@ -7,13 +7,13 @@ import { fastPath, normalizeName, RESTRAINT } from "../parser/fastpath.js";
 import { ancestors, charProps, slugify } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
-import { approxTokens, describeScene, getSettings, storyWindow, type WorldSettings } from "./context.js";
+import { appointmentAt, approxTokens, clockAt, describeScene, getSettings, scheduleLines, storyWindow, type WorldSettings } from "./context.js";
 import { chapterContext, updateChapters } from "./memory.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
 import { agingOps, lifeDue, lifeText, newsText, selectThreads, simulatePeriod, threadText } from "./world.js";
-import { threads } from "../world/queries.js";
+import { clockMinutes, threads } from "../world/queries.js";
 import { Sheet } from "../world/types.js";
 
 export type PlayKind = "do" | "say" | "story" | "continue";
@@ -71,7 +71,7 @@ Rules:
 - "pace": what kind of moment this is. quiet = resting, bathing, sleeping, eating, idle; intimate = tender or sexual; social = conversation; travel = going somewhere; exploring = looking around new or unfamiliar places; investigating = deliberately searching, questioning, studying something; fighting = combat.
 - "activity": "cultivate" when the protagonist meditates, cultivates or refines energy; "train" only when a present character has already agreed to teach them or is teaching them (then "teacher" is that character's id and "skill" the skill being taught); else null.
 - "difficulty": judged from the situation, not from the player's wording. "impossible" = beyond anything the character's sheet could achieve (lifting a building, killing with a word, magic they don't have).
-- "minutes": realistic in-world minutes the attempt takes (a sentence of speech 1, a meal 40, a bath 30, a night's sleep 480), or null if under a minute or it's travel.
+- "minutes": realistic in-world minutes the attempt takes (a sentence of speech 1, a meal 40, a bath 30, a night's sleep 480), or null if under a minute or it's travel. Waiting until a stated time or a Scheduled event: the minutes from Time until then.
 - "destination": if the attempt is to go to another room, building or area, its short name as the player refers to it ("the market", "the captain's quarters"); otherwise null. "destination_scope": "same_building" if it is part of the building the protagonist is in, else "elsewhere".`;
 
 const OPS_HELP = `State changes: begin your reply with an <ops> block containing one JSON op per line, then the prose. Copy entity ids exactly as shown in [brackets], including the kind prefix (e.g. "character:<slug>", never the bare "<slug>"). Available ops:
@@ -131,7 +131,7 @@ Binding rules:
 - Perception is limited and subjective. Describe only what the protagonist could physically observe (expressions, posture, tone, timing), never what it means. Reading people is the protagonist's own interpretation: hedge it, keep it ambiguous, and let it be wrong; only a protagonist whose sheet shows strong insight or empathy reads people well. Gestures and expressions are often misunderstood, by NPCs too.
 - Leave subtext unspoken. Don't explain motives, don't summarise what a moment means, don't over-describe. Trust the reader.
 - Characters behave like real people with theory of mind: they consider how they come across and what others think, they can be guarded, awkward, inconsistent or mundane. Avoid cartoonish exaggeration unless the style explicitly calls for it.
-- Time passes realistically. Keep the time of day consistent with the clock in the scene state; actions take plausible time (a meal ~30-60 min, a conversation minutes). Never jump time without an explicit reason.
+- Time passes realistically. Keep the time of day consistent with the clock in the scene state; actions take plausible time (a meal ~30-60 min, a conversation minutes). Never jump time without an explicit reason. Scheduled events happen at their time, not before: until then they are still being prepared or haven't started. If the protagonist skips ahead to one, include a time_advance that reaches it.
 - Length: about ${s.length} words; shorter is fine when the moment is brief. Stop at the first moment the protagonist would plausibly want to respond or choose; do not continue past it.
 
 ${OPS_HELP}`;
@@ -464,6 +464,10 @@ const Review = z.object({
     )
     .max(2)
     .catch([]),
+  appointments: z
+    .array(z.object({ text: z.string().min(1).max(200), time: z.string().max(5), days_ahead: z.number().int().min(0).max(30).catch(0), who: z.array(z.string()).max(6).catch([]) }))
+    .max(2)
+    .catch([]),
   thread_updates: z
     .array(z.object({ id: z.string(), status: z.enum(["open", "resolved", "abandoned"]).catch("open"), note: z.string().max(300).nullable().catch(null) }))
     .max(3)
@@ -474,19 +478,21 @@ const Review = z.object({
 /** Open threads beyond this are not created; old ones must resolve first. */
 const MAX_OPEN_THREADS = 12;
 
-const HOOK = /\b(?:owe|owed|debt|promis|swear|swore|vow|deadline|by (?:dawn|dusk|nightfall|morning|tomorrow)|threat|revenge|missing|letter|summon|warn|bounty|contract|job|quest|paid|repaid|settled)/i;
+const HOOK = /\b(?:\d{1,2}(?::\d\d)?\s*(?:am|pm|o'?clock)|o'?clock|noon|midnight|tonight|tomorrow|at (?:dawn|dusk|sunset|sunrise|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)|owe|owed|debt|promis|swear|swore|vow|deadline|by (?:dawn|dusk|nightfall|morning|tomorrow)|threat|revenge|missing|letter|summon|warn|bounty|contract|job|quest|paid|repaid|settled)/i;
 
 const REVIEW_PROMPT = `You keep the game's records consistent with a story passage. Output JSON:
 {"characters":[{"name":str,"description":"one line from the passage","age":int|null}],
  "details":[{"id":ID,"add":str}],
  "facts":[{"text":str,"subjects":[ID]}],
  "threads":[{"title":str,"text":str,"participants":[ID],"urgency":"low"|"rising"|"urgent","deadline_hours":num|null}],
- "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}]}
+ "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}],
+ "appointments":[{"text":str,"time":"HH:MM","days_ahead":int,"who":[ID]}]}
 - characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
 - threads: a NEW unresolved situation the protagonist now knows of that will still matter after this scene ends (days, not minutes): a debt, promise, threat, request, rivalry or mystery. Not a question asked in conversation, an instruction for the current task, or anything likely settled within the hour. Not already in Open threads. Most turns: none. deadline_hours only if a time limit was stated or clearly implied.
 - thread_updates: Open threads this passage resolved, abandoned (the protagonist refused or gave up), or clearly moved forward (status "open" with a short note). Usually none.
+- appointments: something set for a specific time that is not already Scheduled ("dinner's at seven", "meet me at the docks at dawn"). text: short, e.g. "dinner at Mara's". time: 24-hour, judged by context and the current Time (dinner at seven = 19:00, dawn = 06:00, noon = 12:00). days_ahead: 0 today, 1 tomorrow. who: ids involved. Usually none.
 Empty arrays when nothing applies.`;
 
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
@@ -513,6 +519,8 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
         role: "user",
         content: [
           `Candidates: ${names.join(", ") || "(none)"}`,
+          `Time: ${clockAt(clockMinutes(store))}`,
+          ...scheduleLines(store),
           "",
           "Tracked characters here:",
           ...(npcs.length ? npcs.map(profile) : ["(none)"]),
@@ -528,7 +536,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], appointments: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
@@ -543,6 +551,10 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       if (!openThreads.some((t) => t.id === u.id)) continue;
       ops.push({ op: "thread_update", id: u.id, ...(u.status !== "open" ? { status: u.status } : {}), ...(u.note ? { note: u.note } : {}) });
     }
+  }
+  for (const a of r.appointments) {
+    const at = appointmentAt(clockMinutes(store), a.time, a.days_ahead);
+    if (at !== null) ops.push({ op: "appointment", text: a.text, at, who: a.who.map((x) => x.replace(/^\[|\]$/g, "")).filter((x) => store.getEntity(x)) });
   }
   const me = store.getEntity(playerId);
   for (const c of r.characters.filter((c) => names.includes(c.name))) {
@@ -622,7 +634,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       costUsd += parsed.cost;
       const p = parsed.value;
       pace = p.pace;
-      const cap = p.pace === "quiet" && !/\b(?:sleep|slept|nap|doze|night|until|wait)/i.test(input) ? QUIET_AWAKE_MINUTES : PACE_MINUTES[p.pace];
+      const cap = /\b(?:until|till|wait)/i.test(input) ? 1440 : p.pace === "quiet" && !/\b(?:sleep|slept|nap|doze|night)/i.test(input) ? QUIET_AWAKE_MINUTES : PACE_MINUTES[p.pace];
       if (p.minutes) engineOps.push({ op: "time_advance", minutes: Math.min(p.minutes, cap) });
       const me = store.getEntity(playerId);
       const restraint = me ? charProps(me).scene.relations.find((r) => RESTRAINT.test(r.type)) : undefined;
