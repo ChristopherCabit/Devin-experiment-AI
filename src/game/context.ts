@@ -254,9 +254,31 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
     (a, b) => a.id - b.id,
   );
   if (facts.length) lines.push("", "Established facts:", ...facts.map((f) => `- ${f.text}`));
+  const held = stances(store).filter((x) => x.who === playerId || present.some((c) => c.id === x.who)).slice(-12);
+  if (held.length)
+    lines.push(
+      "",
+      "Stated positions (who argued which side; nobody switches sides unless the story shows them being persuaded):",
+      ...held.map((x) => `- ${x.who === playerId ? "You (the protagonist)" : (store.getEntity(x.who)?.name ?? x.who)}, on ${x.topic}: ${x.stance}`),
+    );
   const known = secrets(store).filter((x) => x.revealed);
   if (known.length) lines.push("", "Secrets the protagonist has uncovered:", ...known.map((x) => `- ${x.text}`));
   return { text: lines.join("\n"), present };
+}
+
+export interface Stance {
+  who: string;
+  topic: string;
+  stance: string;
+  turn: number;
+}
+
+export const stances = (store: WorldStore): Stance[] => store.getMeta<Stance[]>("stances", []);
+
+/** A turn as the models read it, with the protagonist's input labelled by who said or did it. */
+export function turnBlock(t: { kind: string; input: string; output: string }): string {
+  const input = !t.input || t.kind === "continue" ? "" : t.kind === "say" ? `> You say: "${t.input}"` : t.kind === "do" ? `> You: ${t.input}` : `> ${t.input}`;
+  return [input, t.output].filter(Boolean).join("\n");
 }
 
 /** Most recent turns that fit the character budget, oldest first. */
@@ -274,7 +296,7 @@ export function storyWindow(log: TurnLog, budgetTokens: number): { text: string;
       from = t.n;
       continue;
     }
-    const block = [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
+    const block = turnBlock(t);
     used += approxTokens(block);
     if (used > budgetTokens) break;
     parts.unshift(block);

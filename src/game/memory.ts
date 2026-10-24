@@ -1,7 +1,7 @@
 import type { TurnLog, TurnRecord } from "../engine/turns.js";
 import type { ChatRequest } from "../llm/client.js";
 import type { WorldStore } from "../world/store.js";
-import { approxTokens } from "./context.js";
+import { approxTokens, turnBlock } from "./context.js";
 
 /** A summary of a run of turns; `sig` ties it to the exact last turn so undone/replaced turns invalidate it. */
 export interface Chapter {
@@ -20,7 +20,7 @@ interface Chat {
 
 const sig = (t: TurnRecord) => `${t.created_at}|${t.output.slice(0, 80)}`;
 const told = (t: TurnRecord) => t.kind !== "author" && !(t.kind === "system" && !t.output);
-const block = (t: TurnRecord) => [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
+const block = (t: TurnRecord) => turnBlock(t);
 
 export function validChapters(store: WorldStore, log: TurnLog): Chapter[] {
   const chapters = store.getMeta<Chapter[]>(KEY, []);
@@ -53,7 +53,7 @@ export async function updateChapters(store: WorldStore, log: TurnLog, llm: Chat,
       {
         role: "system",
         content:
-          'Summarise this chapter of an interactive story as long-term memory for its narrator. At most 120 words, past tense, the protagonist is "you". Keep concrete facts a later scene must not contradict: who did and said what, promises, debts, changes in relationships, injuries, where items were left and why, names, unresolved threads. No commentary, no style.' +
+          'Summarise this chapter of an interactive story as long-term memory for its narrator. At most 120 words, past tense, the protagonist is "you". Keep concrete facts a later scene must not contradict: who did and said what, promises, debts, changes in relationships, injuries, where items were left and why, names, unresolved threads. In any argument, debate or negotiation, say who held which side, by name ("you argued X; Mara insisted Y"); lines after "> You say:" are words the protagonist said. No commentary, no style.' +
           (corrections.trim() ? ` The player's corrections override the chapter where they conflict; summarise as if they were always true: ${corrections.trim()}` : ""),
       },
       { role: "user", content: `${chapters.length ? `Previous chapter: ${chapters.at(-1)?.text}\n\n` : ""}Chapter:\n${text}` },

@@ -137,6 +137,7 @@ export const Op = z.discriminatedUnion("op", [
   z.object({ op: z.literal("forget_thought"), npc: EntityId, key: z.string().min(1) }).strict(),
   z.object({ op: z.literal("relationship_note"), npc: EntityId, target: EntityId, text: Text }).strict(),
   z.object({ op: z.literal("fact"), text: Text, subjects: z.array(EntityId).default([]) }).strict(),
+  z.object({ op: z.literal("stance"), who: EntityId, topic: z.string().trim().min(1).max(80), stance: z.string().trim().min(1).max(200) }).strict(),
   z.object({ op: z.literal("time_advance"), minutes: z.number().int().positive() }).strict(),
   z
     .object({ op: z.literal("resource_delta"), character: EntityId, resource: Name, delta: z.number() })
