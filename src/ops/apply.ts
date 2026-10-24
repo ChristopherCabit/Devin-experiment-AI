@@ -68,6 +68,17 @@ function need(store: WorldStore, id: string, kinds?: readonly EntityKind[]): Ent
   return e;
 }
 
+/** `into` with any keys it lacks (or has as null) filled from `from`; arrays are unioned. */
+function fillMissing(into: unknown, from: unknown): unknown {
+  if (Array.isArray(into) && Array.isArray(from)) return [...into, ...from.filter((x) => !into.some((y) => JSON.stringify(y) === JSON.stringify(x)))];
+  if (into && from && typeof into === "object" && typeof from === "object" && !Array.isArray(into) && !Array.isArray(from)) {
+    const out: Record<string, unknown> = { ...(into as Record<string, unknown>) };
+    for (const [k, v] of Object.entries(from)) out[k] = out[k] === undefined || out[k] === null ? v : fillMissing(out[k], v);
+    return out;
+  }
+  return into ?? from;
+}
+
 function editChar(store: WorldStore, id: string, fn: (p: CharacterProps, e: Entity) => void): void {
   const e = need(store, id, ["character"]);
   const p = charProps(e);
@@ -276,6 +287,31 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       if (store.children(e.id).length) fail(`${e.name} still contains things`);
       if (PORTABLE.includes(e.kind)) detach(store, e.id);
       store.deleteEntity(e.id);
+      return {};
+    }
+
+    case "merge_entity": {
+      if (ctx.source !== "author") fail("only the author can merge");
+      const from = need(store, op.from);
+      const into = need(store, op.into);
+      if (from.id === into.id) fail("cannot merge something into itself");
+      if (from.kind !== into.kind) fail("can only merge things of the same kind");
+      if ((from.props as { is_player?: unknown }).is_player) fail("cannot merge the player away");
+      const swap = <T>(v: T): T => JSON.parse(JSON.stringify(v).split(`"${from.id}"`).join(`"${into.id}"`)) as T;
+      for (const c of store.children(from.id)) store.putEntity({ ...c, parent_id: into.id });
+      let props = swap(fillMissing(into.props, from.props)) as Record<string, unknown>;
+      const scene = props.scene as { relations?: { target: string }[] } | undefined;
+      if (scene?.relations) scene.relations = scene.relations.filter((r, i, all) => r.target !== into.id && all.findIndex((x) => JSON.stringify(x) === JSON.stringify(r)) === i);
+      if (into.kind === "character") props = CharacterProps.parse(props);
+      const aliases = [...new Set([...into.aliases, from.name, ...from.aliases])].filter((a) => a.toLowerCase() !== into.name.toLowerCase());
+      store.deleteEntity(from.id);
+      store.putEntity({ ...into, aliases, props });
+      for (const e of store.allEntities()) if (e.id !== into.id && JSON.stringify(e).includes(`"${from.id}"`)) store.putEntity(swap(e));
+      for (const key of ["secrets", "threads", "appointments", "world_events"]) {
+        const v = store.getMeta<unknown>(key, null);
+        if (v !== null && JSON.stringify(v).includes(`"${from.id}"`)) store.setMeta(key, swap(v));
+      }
+      for (const f of store.facts()) if (f.subjects.includes(from.id)) store.setFactSubjects(f.id, [...new Set(f.subjects.map((s) => (s === from.id ? into.id : s)))]);
       return {};
     }
 

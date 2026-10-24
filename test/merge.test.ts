@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+import { TurnLog } from "../src/engine/turns.js";
+import { getSettings } from "../src/game/context.js";
+import { playTurn } from "../src/game/pipeline.js";
+import { applyOps } from "../src/ops/apply.js";
+import { PLAYER_ID, STARTER } from "../src/game/seeds.js";
+import type { ChatRequest } from "../src/llm/client.js";
+import { appointments } from "../src/world/queries.js";
+import { WorldStore } from "../src/world/store.js";
+
+function world(reply: (req: ChatRequest) => string) {
+  const store = new WorldStore();
+  const log = new TurnLog(store);
+  log.commit({ kind: "author", input: "seed", ops: STARTER.ops, source: "author" });
+  const seen: ChatRequest[] = [];
+  const llm = { chat: (req: ChatRequest) => (seen.push(req), Promise.resolve({ text: reply(req), promptTokens: 0, completionTokens: 0, costUsd: 0 })) };
+  return { store, log, seen, deps: { store, log, llm, playerId: PLAYER_ID, rng: () => 0.5 } };
+}
+const isReview = (req: ChatRequest) => /keep the game's records/.test(String(req.messages[0]?.content));
+
+describe("one character, many names", () => {
+  it("records a nickname for someone present as an alias instead of a new character", async () => {
+    const { store, deps } = world((req) =>
+      isReview(req)
+        ? JSON.stringify({ characters: [{ name: "Joy", description: "a barmaid" }], aliases: [{ id: "[character:mara]", name: "Joy" }] })
+        : "<ops></ops>Rook raises his mug and calls her Joy, and Mara rolls her eyes at him.",
+    );
+    await playTurn(deps, "say", "Evening.");
+    expect(store.allEntities().some((e) => e.name === "Joy")).toBe(false);
+    expect(store.getEntity("character:mara")?.aliases).toContain("Joy");
+  });
+
+  it("merges a duplicate into the original, moving facts and schedule, and undo restores it", () => {
+    const { store, log } = world(() => "");
+    const mara = store.getEntity("character:mara");
+    if (!mara) throw new Error("no Mara");
+    store.putEntity({ ...mara, id: "character:joy", name: "Joy", aliases: ["Wednesday"] });
+    const fact = store.addFact("Joy owes Rook a silver", ["character:joy", "character:rook"], 0);
+    applyOps(store, [{ op: "appointment", text: "supper with Joy", at: 2000, who: ["character:joy"] }], { source: "engine", turn: 0 });
+    log.commit({ kind: "author", input: "merge", source: "author", ops: [{ op: "merge_entity", from: "character:joy", into: "character:mara" }] });
+    expect(store.getEntity("character:joy")).toBeNull();
+    expect(store.getEntity("character:mara")?.aliases).toEqual(expect.arrayContaining(["Joy", "Wednesday"]));
+    expect(store.facts().find((f) => f.id === fact)?.subjects).toEqual(["character:mara", "character:rook"]);
+    expect(appointments(store)[0]?.who).toEqual(["character:mara"]);
+    log.undo();
+    expect(store.getEntity("character:joy")?.name).toBe("Joy");
+    expect(store.facts().find((f) => f.id === fact)?.subjects).toContain("character:joy");
+    expect(store.getEntity("character:mara")?.aliases).not.toContain("Joy");
+  });
+
+  it("refuses to merge the player away or across kinds", () => {
+    const { log } = world(() => "");
+    const r = log.commit({ kind: "author", input: "merge", source: "author", ops: [{ op: "merge_entity", from: PLAYER_ID, into: "character:mara" }] });
+    expect(r.results[0]?.ok).toBe(false);
+  });
+});
+
+describe("corrections", () => {
+  it("reach the narrator and the record-keeper with top priority", async () => {
+    const { store, seen, deps } = world((req) => (isReview(req) ? "{}" : "<ops></ops>Mara nods."));
+    store.setMeta("settings", { ...getSettings(store), corrections: "Margaret is also called Joy; she is one person." });
+    await playTurn(deps, "say", "Evening.");
+    const systems = seen.map((r) => String(r.messages[0]?.content));
+    expect(systems.some((s) => /PLAYER CORRECTIONS[^\n]*\nMargaret is also called Joy/.test(s))).toBe(true);
+    expect(systems.some((s) => /keep the game's records[\s\S]*Player corrections[^\n]*Margaret/.test(s))).toBe(true);
+  });
+});

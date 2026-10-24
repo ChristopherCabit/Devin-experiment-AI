@@ -150,7 +150,30 @@ function showEntity() {
   $("entity-name").value = e.name;
   $("entity-aliases").value = e.aliases.join(", ");
   $<HTMLTextAreaElement>("entity-props").value = JSON.stringify(e.props, null, 2);
+  $<HTMLSelectElement>("merge-into").replaceChildren(new Option("—", ""), ...entities.filter((x) => x.kind === e.kind && x.id !== e.id).map((x) => new Option(`${x.name} (${x.id})`, x.id)));
+  const b = $("btn-merge");
+  b.dataset.armed = "";
+  b.textContent = "Merge";
 }
+$("btn-merge").onclick = async () => {
+  const from = $<HTMLSelectElement>("entity-select").value;
+  const into = $<HTMLSelectElement>("merge-into").value;
+  const b = $("btn-merge");
+  if (!from || !into) return void ($("cast-msg").textContent = "Pick who to merge into.");
+  if (b.dataset.armed !== "1") {
+    b.dataset.armed = "1";
+    b.textContent = `Tap again to merge into ${entities.find((x) => x.id === into)?.name ?? into}`;
+    return;
+  }
+  try {
+    await game.mergeEntities(from, into);
+    $("cast-msg").textContent = "Merged.";
+    loadEntities(into);
+    render(game.state());
+  } catch (e) {
+    $("cast-msg").textContent = errText(e);
+  }
+};
 $("entity-select").onchange = showEntity;
 function renderSecrets() {
   const all = game.secrets();
@@ -214,7 +237,7 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "corrections", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
 const BOOLS = new Set<string>(["research", "music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
 const NUMERIC = new Set<string>(["researchMax", "thoughtsPerTurn", "contextTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);

@@ -45,6 +45,9 @@
     <label>Aliases (comma separated) <input id="entity-aliases"></label>
     <label>Properties (JSON) <textarea id="entity-props" rows="18" spellcheck="false"></textarea></label>
     <div class="row"><button id="btn-entity-save" class="primary">Save</button></div>
+    <label>Merge this duplicate into <select id="merge-into"></select></label>
+    <p class="hint">Its name becomes an alias of the one you pick, and its facts, threads, relationships, items and schedule move over. Undo reverses it.</p>
+    <div class="row"><button id="btn-merge" class="danger">Merge</button></div>
     <h3>Add</h3>
     <div class="row">
       <select id="new-kind"><option>character</option><option>item</option><option>container</option><option>room</option></select>
@@ -128,23 +131,38 @@
       <button id="btn-save-import">Import</button>
     </div>
     <h3>This world</h3>
-    <label>Title <input id="s-title"></label>
-    <label>Premise <textarea id="s-premise" rows="6"></textarea></label>
-    <label>Style <textarea id="s-style" rows="3"></textarea></label>
-    <label>Content intensity
-      <select id="s-intensity"><option value="none">none</option><option value="mild">mild</option><option value="explicit">explicit</option></select>
-    </label>
-    <label>Hard limits <textarea id="s-limits" rows="2"></textarea></label>
-    <label>Death policy
-      <select id="s-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select>
-    </label>
-    <label>Narration length
-      (words per turn; it stops earlier at a decision point)
-      <input id="s-length-range" type="range" min="30" max="800" step="10">
-      <input id="s-length" type="number" min="30" max="800" step="10">
-    </label>
-    <label><input id="s-asides" type="checkbox"> Allow narrator asides (out-of-character comments)</label>
-    <details>
+    <label>Corrections for the AI (obeyed over everything else until you clear them, e.g. "Margaret is also called Joy and Wednesday; she is one person.")
+      <textarea id="s-corrections" rows="3" maxlength="2000"></textarea></label>
+    <details class="section" open>
+      <summary>Story</summary>
+      <label>Title <input id="s-title"></label>
+      <label>Premise <textarea id="s-premise" rows="6"></textarea></label>
+      <label>Style <textarea id="s-style" rows="3"></textarea></label>
+      <label>Content intensity
+        <select id="s-intensity"><option value="none">none</option><option value="mild">mild</option><option value="explicit">explicit</option></select>
+      </label>
+      <label>Hard limits <textarea id="s-limits" rows="2"></textarea></label>
+      <label>Narration length
+        (words per turn; it stops earlier at a decision point)
+        <input id="s-length-range" type="range" min="30" max="800" step="10">
+        <input id="s-length" type="number" min="30" max="800" step="10">
+      </label>
+      <label><input id="s-asides" type="checkbox"> Allow narrator asides (out-of-character comments)</label>
+    </details>
+    <details class="section">
+      <summary>Rules and progression</summary>
+      <label>Death policy
+        <select id="s-deathPolicy"><option>consequence</option><option>checkpoint</option><option>narrative</option><option>ironman</option></select>
+      </label>
+      <label>World power (1-10) <input id="s-powerCeiling" type="number" min="1" max="10"></label>
+      <label>NPC inner thoughts (0 off, 2 normal, 5 a lot; each character scaled by their mind, personality and "thoughtfulness") <input id="s-thoughtsPerTurn" type="number" min="0" max="5"></label>
+      <label class="check"><input type="checkbox" id="s-unboundedPower"> Unbounded power (godlike play)</label>
+      <label class="check"><input type="checkbox" id="s-prog-practice" checked> Practice: skills improve with use</label>
+  <label class="check"><input type="checkbox" id="s-prog-mentors" checked> Mentors: characters can train you up to their level</label>
+  <label>Cultivation realms, lowest first, one per line (empty = none) <textarea id="s-prog-realms" rows="3"></textarea></label>
+  <label>Cultivation resource (optional) <input id="s-prog-resource" placeholder="spirit stones"></label>
+    </details>
+    <details class="section">
       <summary>Living world (threads, off-screen lives, world events)</summary>
       <label><input id="s-threads" type="checkbox"> Track open threads (debts, promises, threats)</label>
       <label>Most threads shown to the narrator per turn <input id="s-threadsShown" type="number" min="0" max="5"></label>
@@ -167,13 +185,13 @@
         </select>
       </label>
     </details>
-    <details>
+    <details class="section">
       <summary>Research</summary>
       <label><input id="s-research" type="checkbox"> Look up real things the story mentions (games, books, places) so the narrator gets them right. About $0.01 per lookup, once per subject.</label>
       <p class="hint">Only a short search query naming the subject is sent to the Exa search engine through OpenRouter, never story text. Exa has no zero-data-retention option; the note is written by the parser model with zero data retention.</p>
       <label>Most lookups per adventure <input id="s-researchMax" type="number" min="0" max="500"></label>
     </details>
-    <details>
+    <details class="section">
       <summary>Music</summary>
       <label><input id="s-music" type="checkbox"> Background music (always instrumental). Each new track is about a minute long, costs about $0.08 and takes about 20 s to make; it is saved on this device and reused when the mood repeats.</label>
       <p class="hint">Music is made by Google Lyria through OpenRouter, which has no zero-data-retention option. Only a mood, an energy level and the style below are sent, never story text.</p>
@@ -184,31 +202,27 @@
       <p class="hint">Tracks saved on this device, shared by all adventures. A deleted mood is made again (and paid for) the next time it comes up.</p>
       <div id="music-bank" class="msg"></div>
     </details>
-    <label>World power (1-10) <input id="s-powerCeiling" type="number" min="1" max="10"></label>
-    <label>NPC inner thoughts (0 off, 2 normal, 5 a lot; each character scaled by their mind, personality and "thoughtfulness") <input id="s-thoughtsPerTurn" type="number" min="0" max="5"></label>
-    <label class="check"><input type="checkbox" id="s-unboundedPower"> Unbounded power (godlike play)</label>
-    <label class="check"><input type="checkbox" id="s-prog-practice" checked> Practice: skills improve with use</label>
-      <label class="check"><input type="checkbox" id="s-prog-mentors" checked> Mentors: characters can train you up to their level</label>
-      <label>Cultivation realms, lowest first, one per line (empty = none) <textarea id="s-prog-realms" rows="3"></textarea></label>
-      <label>Cultivation resource (optional) <input id="s-prog-resource" placeholder="spirit stones"></label>
-    <label>Narrator model (pick or type any OpenRouter id) <input id="s-narratorModel" list="models-narrator"></label>
-    <datalist id="models-narrator">
-      <option value="z-ai/glm-5.3">GLM 5.3: recommended, steady timing</option>
-      <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: cheapest, restrained</option>
-      <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro: strong prose, ~1.5x cost</option>
-      <option value="moonshotai/kimi-k3">Kimi K3: richest characters, ~6x cost, slower</option>
-    </datalist>
-    <label>Narrator reasoning <select id="s-narratorReasoning">
-      <option value="off">Off (fastest; models that require it use low)</option>
-      <option value="low">Low</option>
-      <option value="default">Model default (slow)</option>
-    </select></label>
-    <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
-    <datalist id="models-parser">
-      <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>
-      <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro</option>
-    </datalist>
-    <label>Context tokens <input id="s-contextTokens" type="number" min="4000" max="128000" step="1000"></label>
+    <details class="section">
+      <summary>Models and memory</summary>
+      <label>Narrator model (pick or type any OpenRouter id) <input id="s-narratorModel" list="models-narrator"></label>
+      <datalist id="models-narrator">
+        <option value="z-ai/glm-5.3">GLM 5.3: recommended, steady timing</option>
+        <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: cheapest, restrained</option>
+        <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro: strong prose, ~1.5x cost</option>
+        <option value="moonshotai/kimi-k3">Kimi K3: richest characters, ~6x cost, slower</option>
+      </datalist>
+      <label>Narrator reasoning <select id="s-narratorReasoning">
+        <option value="off">Off (fastest; models that require it use low)</option>
+        <option value="low">Low</option>
+        <option value="default">Model default (slow)</option>
+      </select></label>
+      <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
+      <datalist id="models-parser">
+        <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>
+        <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro</option>
+      </datalist>
+      <label>Context tokens <input id="s-contextTokens" type="number" min="4000" max="128000" step="1000"></label>
+    </details>
     <div class="row"><button id="btn-settings-save" class="primary">Save</button></div>
     <p id="sheet"></p>
     <h3>App settings</h3>

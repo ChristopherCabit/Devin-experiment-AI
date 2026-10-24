@@ -13,6 +13,8 @@ export interface WorldSettings {
   style: string;
   intensity: "none" | "mild" | "explicit";
   limits: string;
+  /** Player-written corrections the narrator and record-keeper must obey over anything in the story so far. */
+  corrections: string;
   deathPolicy: DeathPolicy;
   narratorModel: string;
   parserModel: string;
@@ -76,6 +78,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   style: "Grounded, vivid, second person, present tense. Around 150-250 words per turn.",
   intensity: "explicit",
   limits: "",
+  corrections: "",
   deathPolicy: "consequence",
   narratorModel: "z-ai/glm-5.3",
   parserModel: "deepseek/deepseek-v4.1-flash-1017",

@@ -43,6 +43,7 @@ const SettingsBody = z
     style: z.string().max(2000),
     intensity: z.enum(["none", "mild", "explicit"]),
     limits: z.string().max(2000),
+    corrections: z.string().max(2000),
     deathPolicy: z.enum(DEATH_POLICIES),
     narratorModel: z.string().min(1).max(120),
     parserModel: z.string().min(1).max(120),
@@ -272,6 +273,16 @@ export class Game {
       const r = results[0];
       if (!r?.ok) throw new GameError(r && !r.ok ? r.reason : "failed");
       return this.W.store.getEntity(id);
+    });
+  }
+
+  /** Folds a duplicate into another entity of the same kind; one undo restores both. */
+  mergeEntities(from: string, into: string): Promise<Entity | null> {
+    return this.serial(() => {
+      const { results } = this.W.log.commit({ kind: "author", input: `merge ${from} into ${into}`, source: "author", ops: [{ op: "merge_entity", from, into }] });
+      const r = results[0];
+      if (!r?.ok) throw new GameError(r && !r.ok ? r.reason : "failed");
+      return this.W.store.getEntity(into);
     });
   }
 

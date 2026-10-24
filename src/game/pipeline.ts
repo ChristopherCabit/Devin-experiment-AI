@@ -110,7 +110,7 @@ function narratorSystem(s: WorldSettings, explicitAllowed: string | null): strin
 World: ${s.title}
 ${s.premise ? `Premise:\n${s.premise}\n` : ""}Style: ${s.style}
 Content: ${content}${s.limits ? ` Hard limits (never include): ${s.limits}.` : ""} All characters in sexual content are adults.
-Death policy: ${s.deathPolicy}.
+Death policy: ${s.deathPolicy}.${s.corrections.trim() ? `\nPLAYER CORRECTIONS (highest priority; they override the story so far, memory, records and anything below):\n${s.corrections.trim()}` : ""}
 Power scale: characters in this world reach about ${s.powerCeiling}/10.${s.progression.cultivation ? `\nCultivation realms (the ability "cultivation" is the index from 0): ${s.progression.cultivation.realms.join(" > ")}. Realms change only through the engine.` : ""}
 
 Binding rules:
@@ -518,6 +518,10 @@ const Review = z.object({
     .array(z.object({ text: z.string().min(1).max(200), time: z.string().max(5), days_ahead: z.number().int().min(0).max(30).catch(0), who: z.array(z.string()).max(6).catch([]) }))
     .max(2)
     .catch([]),
+  aliases: z
+    .array(z.object({ id: z.string(), name: z.string().min(1).max(80) }))
+    .max(4)
+    .catch([]),
   schedule_changes: z
     .array(z.object({ text: z.string().min(1).max(200), change: z.enum(["moved", "cancelled", "done"]), time: z.string().max(5).nullable().catch(null), days_ahead: z.number().int().min(0).max(30).catch(0) }))
     .max(2)
@@ -541,8 +545,10 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
  "threads":[{"title":str,"text":str,"participants":[ID],"urgency":"low"|"rising"|"urgent","deadline_hours":num|null}],
  "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}],
  "appointments":[{"text":str,"time":"HH:MM","days_ahead":int,"who":[ID]}],
- "schedule_changes":[{"text":str,"change":"moved"|"cancelled"|"done","time":"HH:MM"|null,"days_ahead":int}]}
-- characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
+ "schedule_changes":[{"text":str,"change":"moved"|"cancelled"|"done","time":"HH:MM"|null,"days_ahead":int}],
+ "aliases":[{"id":ID,"name":str}]}
+- characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them. Never another name for a tracked character (see aliases).
+- aliases: a Candidate that is another name for a Tracked character here: nickname, pet name, surname, title, code name, or a name someone calls them. Put it here, never in characters. Usually none.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
 - threads: a NEW unresolved situation the protagonist now knows of that will still matter after this scene ends (days, not minutes): a debt, promise, threat, request, rivalry or mystery. Not a question asked in conversation, an instruction for the current task, or anything likely settled within the hour. Not already in Open threads. Most turns: none. deadline_hours only if a time limit was stated or clearly implied.
@@ -570,7 +576,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
     maxTokens: 900,
     temperature: 0,
     messages: [
-      { role: "system", content: REVIEW_PROMPT + (s.research ? RESEARCH_RULE : "") },
+      { role: "system", content: REVIEW_PROMPT + (s.research ? RESEARCH_RULE : "") + (s.corrections.trim() ? `\nPlayer corrections (they override the passage and records): ${s.corrections.trim()}` : "") },
       {
         role: "user",
         content: [
@@ -593,7 +599,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [], schedule_changes: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [], schedule_changes: [], aliases: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
@@ -622,8 +628,15 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
     const at = c.change === "moved" && c.time ? appointmentAt(clockMinutes(store), c.time, c.days_ahead) : null;
     if (hit && (c.change !== "moved" || (at !== null && at !== hit.at))) ops.push({ op: "appointment_update", text: hit.text, status: c.change, at });
   }
+  const aliased = new Set<string>();
+  for (const a of r.aliases) {
+    const e = npcs.find((c) => c.id === a.id.replace(/^\[|\]$/g, ""));
+    if (!e || !names.includes(a.name)) continue;
+    aliased.add(a.name);
+    if (!e.aliases.includes(a.name)) ops.push({ op: "update_character", id: e.id, aliases: [a.name] });
+  }
   const me = store.getEntity(playerId);
-  for (const c of r.characters.filter((c) => names.includes(c.name))) {
+  for (const c of r.characters.filter((c) => names.includes(c.name) && !aliased.has(c.name))) {
     const props: Record<string, unknown> = { description: c.description };
     if (c.age !== null) props.age = c.age;
     ops.push({ op: "create_entity", id: uniqueId(store, "character", c.name), kind: "character", name: c.name, parent: me?.parent_id ?? null, zone: me ? (charProps(me).scene.zone ?? undefined) : undefined, props });
