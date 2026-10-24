@@ -95,11 +95,14 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   connectedness: "regional",
   music: false,
   musicStyle: "",
-  musicModel: "google/lyria-3-clip-preview",
+  musicModel: "google/lyria-3-pro-preview",
 };
 
 /** Former default; saves still pointing at it follow the current default. */
 const LEGACY_MODEL = "deepseek/deepseek-chat-v3-0324";
+
+/** Makes only 30 s clips; saves that had it get the longer default. */
+const SHORT_MUSIC = "google/lyria-3-clip-preview";
 
 const LEGACY_LENGTH: Record<string, number> = { short: 90, medium: 180, long: 350 };
 
@@ -108,6 +111,7 @@ export function getSettings(store: WorldStore): WorldSettings {
   if (typeof s.length !== "number") s.length = LEGACY_LENGTH[String(s.length)] ?? DEFAULT_SETTINGS.length;
   if (s.narratorModel === LEGACY_MODEL) s.narratorModel = DEFAULT_SETTINGS.narratorModel;
   if (s.parserModel === LEGACY_MODEL) s.parserModel = DEFAULT_SETTINGS.parserModel;
+  if (s.musicModel === SHORT_MUSIC) s.musicModel = DEFAULT_SETTINGS.musicModel;
   return s;
 }
 

@@ -28,6 +28,7 @@ describe("music prompt", () => {
     expect(p).toContain("tense, suspenseful");
     expect(p).not.toMatch(/[<>{}"\n]/);
     expect(cleanStyle("x".repeat(300))).toHaveLength(80);
+    expect(cueKey(tense, "folk", "a")).not.toBe(cueKey(tense, "folk", "b"));
   });
 });
 
@@ -60,6 +61,13 @@ describe("music director", () => {
     expect(await d.next("a", src, true)).toBeNull();
     expect(prompts).toHaveLength(1);
     expect([...files.data.keys()]).toHaveLength(0);
+  });
+});
+
+describe("music director, full songs", () => {
+  it("accepts section markers from the long model as instrumental", async () => {
+    const { src } = source([tense], "[[A0]]\n[[B1]]\n[[C2]]");
+    expect(await new MusicDirector(new MemoryFiles()).next("a", src)).not.toBeNull();
   });
 });
 

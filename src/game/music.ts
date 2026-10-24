@@ -47,7 +47,7 @@ export function musicPrompt(cue: Cue, style: string): string {
     `${cleanStyle(style) || "Cinematic underscore"}.`,
     `Mood: ${MOOD_WORDS[cue.mood]}.`,
     `${TEMPO[cue.energy]}.`,
-    "Unobtrusive background music that loops smoothly.",
+    "Unobtrusive background music that loops smoothly, about 50 seconds long.",
   ].join(" ");
 }
 
@@ -57,7 +57,7 @@ function hash(s: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
-export const cueKey = (cue: Cue, style: string) => `${hash(cleanStyle(style).toLowerCase())}-${cue.mood}-${cue.energy}`;
+export const cueKey = (cue: Cue, style: string, model = "") => `${hash(`${cleanStyle(style).toLowerCase()}|${model}`)}-${cue.mood}-${cue.energy}`;
 
 type Llm = { chat(req: ChatRequest): Promise<ChatResult> };
 
@@ -89,6 +89,7 @@ export interface Track {
 
 export interface MusicSource {
   style: string;
+  model?: string;
   tag(passage: string): Promise<Cue | null>;
   generate(prompt: string): Promise<{ audio: Uint8Array; text: string }>;
 }
@@ -106,7 +107,7 @@ export class MusicDirector {
   async next(passage: string, src: MusicSource, force = false): Promise<Track | null> {
     const cue = await src.tag(passage);
     if (!cue) return null;
-    const key = cueKey(cue, src.style);
+    const key = cueKey(cue, src.style, src.model);
     if (key === this.current && !force) {
       this.pending = null;
       return null;

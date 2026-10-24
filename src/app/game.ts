@@ -210,6 +210,7 @@ export class Game {
       passage,
       {
         style: s.musicStyle,
+        model: s.musicModel,
         tag: (p) => tagScene(llm, s.parserModel, p),
         generate: (prompt) => (this.opts.music ?? generateMusic)({ apiKey: String(apiKey), meter: this.meter, fetch: this.opts.fetch, model: s.musicModel, prompt }),
       },

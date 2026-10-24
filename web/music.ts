@@ -8,12 +8,15 @@ export class MusicPlayer {
   private buf: AudioBuffer | null = null;
   private live: { src: AudioBufferSourceNode; gain: GainNode }[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private nextAt = 0;
 
   constructor() {
     // WebViews only start audio after a user gesture; resume on any tap or key so later tracks can play.
     const unlock = () => void this.ctx?.resume().catch(() => undefined);
     addEventListener("pointerdown", unlock);
     addEventListener("keydown", unlock);
+    document.addEventListener("visibilitychange", () => (document.hidden ? this.pause() : this.resume()));
+    addEventListener("pagehide", () => this.pause());
   }
 
   get volume(): number {
@@ -77,10 +80,29 @@ export class MusicPlayer {
       this.live = this.live.filter((n) => n !== node);
       gain.disconnect();
     };
-    const next = end - fade;
+    this.nextAt = end - fade;
+    this.arm();
+  }
+
+  private arm() {
+    const { ctx, buf } = this;
+    clearTimeout(this.timer);
+    if (!ctx || !buf) return;
+    const at = this.nextAt;
     this.timer = setTimeout(() => {
-      if (this.buf === buf) this.start(next);
-    }, Math.max(0, (next - ctx.currentTime - 1) * 1000));
+      if (this.buf === buf) this.start(at);
+    }, Math.max(0, (at - ctx.currentTime - 1) * 1000));
+  }
+
+  /** Silences everything while the app is in the background; the audio clock stops, so the loop resumes where it was. */
+  private pause() {
+    clearTimeout(this.timer);
+    void this.ctx?.suspend().catch(() => undefined);
+  }
+
+  private resume() {
+    if (!this.ctx || !this.key) return;
+    void this.ctx.resume().then(() => this.arm(), () => undefined);
   }
 
   private fadeAll() {
