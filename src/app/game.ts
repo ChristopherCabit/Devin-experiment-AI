@@ -61,6 +61,8 @@ const SettingsBody = z
     worldEvents: z.boolean(),
     worldEventDays: z.number().min(0.5).max(365),
     connectedness: z.enum(["isolated", "regional", "global"]),
+    research: z.boolean(),
+    researchMax: z.number().int().min(0).max(500),
     music: z.boolean(),
     musicStyle: z.string().max(120),
     musicModel: z.string().min(1).max(120),

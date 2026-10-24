@@ -171,6 +171,10 @@ export const Thread = z.object({
 });
 export type Thread = z.infer<typeof Thread>;
 
+/** A looked-up note about something real (a game, book, place) the story mentions. */
+export const Reference = z.object({ subject: z.string().min(1).max(120), note: z.string().max(1500), turn: z.number().int().default(0) });
+export type Reference = z.infer<typeof Reference>;
+
 /** Something set for a clock time ("dinner at seven"). `at` is in clock minutes. */
 export const Appointment = z.object({
   text: z.string().min(1).max(200),

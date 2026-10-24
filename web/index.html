@@ -168,6 +168,12 @@
       </label>
     </details>
     <details>
+      <summary>Research</summary>
+      <label><input id="s-research" type="checkbox"> Look up real things the story mentions (games, books, places) so the narrator gets them right. About $0.01 per lookup, once per subject.</label>
+      <p class="hint">Only a short search query naming the subject is sent to the Exa search engine through OpenRouter, never story text. Exa has no zero-data-retention option; the note is written by the parser model with zero data retention.</p>
+      <label>Most lookups per adventure <input id="s-researchMax" type="number" min="0" max="500"></label>
+    </details>
+    <details>
       <summary>Music</summary>
       <label><input id="s-music" type="checkbox"> Background music (always instrumental). Each new track is about a minute long, costs about $0.08 and takes about 20 s to make; it is saved on this device and reused when the mood repeats.</label>
       <p class="hint">Music is made by Google Lyria through OpenRouter, which has no zero-data-retention option. Only a mood, an energy level and the style below are sent, never story text.</p>

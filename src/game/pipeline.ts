@@ -13,7 +13,7 @@ import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
 import { agingOps, lifeDue, lifeText, newsText, selectThreads, simulatePeriod, threadText } from "./world.js";
-import { clockMinutes, threads } from "../world/queries.js";
+import { appointments, clockMinutes, references, threads } from "../world/queries.js";
 import { Sheet } from "../world/types.js";
 
 export type PlayKind = "do" | "say" | "story" | "continue";
@@ -445,6 +445,46 @@ export function untrackedNames(store: WorldStore, prose: string, ops: unknown[])
 /** Off-screen periods run in the background after a turn and are applied at the start of the next one (dropped if that turn was undone). */
 const periods = new WeakMap<WorldStore, { turn: number; p: Promise<{ ops: OpInput[]; cost: number }> }>();
 
+const WAIT_STOP = new Set(["with", "from", "that", "meet", "meeting", "about", "there"]);
+
+/** Minutes until the Scheduled event an explicit wait names ("wait until supper"), so the clock lands on it exactly. */
+export function waitTarget(store: WorldStore, input: string): number | null {
+  if (!/\b(?:until|till|for)\b/i.test(input)) return null;
+  const now = clockMinutes(store);
+  const said = input.toLowerCase();
+  const hit = appointments(store).find(
+    (a) => a.at > now && a.at - now <= 1440 && a.text.toLowerCase().split(/[^a-z']+/).some((w) => w.length > 3 && !WAIT_STOP.has(w) && said.includes(w.replace(/'s$/, "")))
+  );
+  return hit ? hit.at - now : null;
+}
+
+/** Web lookups started after a turn; applied at the start of the next one, like off-screen periods. */
+const lookups = new WeakMap<WorldStore, { turn: number; p: Promise<{ ops: OpInput[]; cost: number }> }>();
+
+type Lookup = { subject: string; query: string };
+
+const RESEARCH_RULE = `
+Also output "references":[{"subject":str,"query":str}]: at most one real-world thing (an existing video game, book, film, song, band, brand, real place or historical event) that the passage or the protagonist mentions and that a knowledgeable reader could catch errors about. Not things invented by this story, not common objects, not in Known references, and not if this world's setting is one where it couldn't exist (then it's just a strange remark). subject: its canonical name with a kind, e.g. "Hollow Knight (video game)". query: a neutral web search naming only that subject and what matters here, e.g. "Hollow Knight video game bosses areas mechanics"; never story names, people or events. Usually none.`;
+
+const RESEARCH_SYSTEM = "Write a factual reference note (under 120 words) about the subject from the search results: what it is, key names, places, mechanics or plot points a fan would know. Only what the results support; no speculation, no links.";
+
+async function lookUp(llm: GameDeps["llm"], model: string, l: Lookup): Promise<{ ops: OpInput[]; cost: number }> {
+  const r = await llm.chat({ model, maxTokens: 350, temperature: 0, web: 3, messages: [{ role: "system", content: RESEARCH_SYSTEM }, { role: "user", content: l.query }] });
+  const flat = r.text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\s*\((?:[\w-]+\.)+[a-z]{2,}(?:,\s*(?:[\w-]+\.)+[a-z]{2,})*\)/gi, "").replace(/\s+/g, " ").trim();
+  const note = flat.length <= 1500 ? flat : flat.slice(0, 1500).replace(/(.*[.!?])[^.!?]*$/s, "$1");
+  return { ops: note ? [{ op: "reference", subject: l.subject, note }] : [], cost: r.costUsd };
+}
+
+/** Notes on real things mentioned in this text, for the narrator. */
+function referenceText(store: WorldStore, text: string): string {
+  const t = text.toLowerCase();
+  const hits = references(store).filter((r) => {
+    const key = r.subject.replace(/\s*\(.*\)\s*$/, "").toLowerCase();
+    return key.length >= 3 && t.includes(key);
+  });
+  return hits.length ? ["## Real-world reference (accurate details for real things that come up; use only what fits, never recite)", ...hits.slice(-2).map((r) => `- ${r.subject}: ${r.note}`)].join("\n") : "";
+}
+
 const Review = z.object({
   characters: z
     .array(z.object({ name: z.string().min(1).max(80), description: z.string().max(400).catch(""), age: z.number().int().nullable().catch(null) }))
@@ -463,6 +503,10 @@ const Review = z.object({
       }),
     )
     .max(2)
+    .catch([]),
+  references: z
+    .array(z.object({ subject: z.string().min(1).max(120), query: z.string().min(1).max(120) }))
+    .max(1)
     .catch([]),
   appointments: z
     .array(z.object({ text: z.string().min(1).max(200), time: z.string().max(5), days_ahead: z.number().int().min(0).max(30).catch(0), who: z.array(z.string()).max(6).catch([]) }))
@@ -496,7 +540,7 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
 Empty arrays when nothing applies.`;
 
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
-async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose: string, ops: unknown[], present: Entity[]): Promise<number> {
+async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose: string, ops: unknown[], present: Entity[], found: Lookup[] = []): Promise<number> {
   const { store, llm, playerId } = deps;
   const names = untrackedNames(store, prose, ops);
   const npcs = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
@@ -514,12 +558,13 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
     maxTokens: 900,
     temperature: 0,
     messages: [
-      { role: "system", content: REVIEW_PROMPT },
+      { role: "system", content: REVIEW_PROMPT + (s.research ? RESEARCH_RULE : "") },
       {
         role: "user",
         content: [
           `Candidates: ${names.join(", ") || "(none)"}`,
           `Time: ${clockAt(clockMinutes(store))}`,
+          ...(s.research ? [`Known references: ${references(store).map((x) => x.subject).join(", ") || "(none)"}`] : []),
           ...scheduleLines(store),
           "",
           "Tracked characters here:",
@@ -536,7 +581,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], appointments: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
@@ -551,6 +596,10 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       if (!openThreads.some((t) => t.id === u.id)) continue;
       ops.push({ op: "thread_update", id: u.id, ...(u.status !== "open" ? { status: u.status } : {}), ...(u.note ? { note: u.note } : {}) });
     }
+  }
+  if (s.research) {
+    const known = new Set(references(store).map((x) => x.subject.toLowerCase()));
+    found.push(...r.references.filter((x) => !known.has(x.subject.toLowerCase())));
   }
   for (const a of r.appointments) {
     const at = appointmentAt(clockMinutes(store), a.time, a.days_ahead);
@@ -635,7 +684,9 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       const p = parsed.value;
       pace = p.pace;
       const cap = /\b(?:until|till|wait)/i.test(input) ? 1440 : p.pace === "quiet" && !/\b(?:sleep|slept|nap|doze|night)/i.test(input) ? QUIET_AWAKE_MINUTES : PACE_MINUTES[p.pace];
-      if (p.minutes) engineOps.push({ op: "time_advance", minutes: Math.min(p.minutes, cap) });
+      const due = waitTarget(store, input);
+      const minutes = due ?? (p.minutes ? Math.min(p.minutes, cap) : null);
+      if (minutes) engineOps.push({ op: "time_advance", minutes });
       const me = store.getEntity(playerId);
       const restraint = me ? charProps(me).scene.relations.find((r) => RESTRAINT.test(r.type)) : undefined;
       const restrainer = restraint ? (store.getEntity(restraint.target)?.name ?? restraint.target) : null;
@@ -726,6 +777,13 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     costUsd += r.cost;
     engineOps.unshift(...r.ops);
   }
+  const look = lookups.get(store);
+  lookups.delete(store);
+  if (look && look.turn === log.lastTurn()) {
+    const r = await look.p;
+    costUsd += r.cost;
+    engineOps.push(...r.ops);
+  }
   if (settings.threads) engineOps.push(...agingOps(store));
 
   const turnNo = log.lastTurn() + 1;
@@ -735,9 +793,11 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   // The narrator must see the world as it is after the engine's ops; preview them, then roll back so the turn commits atomically.
   store.beginCapture();
   let preview: ReturnType<typeof describeScene>;
+  let refs = "";
   try {
     applyOps(store, engineOps, { source: "engine", turn: log.lastTurn() + 1 });
     preview = describeScene(store, playerId);
+    if (settings.research) refs = referenceText(store, `${input}\n${storyWindow(log, 800).text}`);
   } finally {
     store.revert(store.endCapture());
   }
@@ -770,6 +830,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       ? `\n## Thought budget (most new or changed "thought" ops per character this turn; use fewer or none when little new crosses their mind)\n${budgets.map((b) => `${b.name}: ${b.max}`).join(", ")}`
       : "",
     background ? `\n${background}` : "",
+    refs ? `\n${refs}` : "",
     hint ? `\n## Hidden from the protagonist\n${hintText(store, hint.secret)}` : "",
   ].join("\n");
 
@@ -794,7 +855,10 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     if (o.op === "create_entity" && o.kind === "character" && !o.parent) o.parent = here;
   }
   const said = kind === "say" ? `says "${input}"` : kind === "do" || kind === "story" ? input : "";
-  costUsd += await reviewProse(deps, settings, said, prose, narratorOps, present);
+  const found: Lookup[] = [];
+  costUsd += await reviewProse(deps, settings, said, prose, narratorOps, present, found);
+  const arriving = new Set(engineOps.flatMap((o) => (o.op === "reference" ? [o.subject.toLowerCase()] : [])));
+  found.splice(0, found.length, ...found.filter((l) => !arriving.has(l.subject.toLowerCase())));
   costUsd += await rateNewCharacters(deps, settings, narratorOps);
   if (spawning) {
     const g = await spawning;
@@ -812,6 +876,8 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   });
   const rejected = results.filter((r) => !r.ok).map((r) => (r.ok ? "" : r.reason));
   costUsd += await updateChapters(store, log, llm, settings.parserModel).catch(() => 0);
+  if (found.length && references(store).length < settings.researchMax)
+    lookups.set(store, { turn, p: Promise.all(found.map((l) => lookUp(llm, settings.parserModel, l).catch(() => ({ ops: [], cost: 0 })))).then((rs) => ({ ops: rs.flatMap((x) => x.ops), cost: rs.reduce((n, x) => n + x.cost, 0) })) });
   if (lifeDue(store, settings)) periods.set(store, { turn, p: simulatePeriod(store, llm, settings, playerId, story.slice(-4000), rng).catch(() => ({ ops: [], cost: 0 })) });
   return { turn, text: prose, interpreted, rejected, costUsd };
 }

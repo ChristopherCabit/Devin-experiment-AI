@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { TurnLog } from "../src/engine/turns.js";
-import { appointmentAt, describeScene } from "../src/game/context.js";
-import { playTurn } from "../src/game/pipeline.js";
+import { appointmentAt, describeScene, getSettings } from "../src/game/context.js";
+import { playTurn, waitTarget } from "../src/game/pipeline.js";
+import { applyOps } from "../src/ops/apply.js";
 import { PLAYER_ID, STARTER } from "../src/game/seeds.js";
 import type { ChatRequest } from "../src/llm/client.js";
-import { appointments, clockMinutes } from "../src/world/queries.js";
+import { appointments, clockMinutes, references } from "../src/world/queries.js";
 import { WorldStore } from "../src/world/store.js";
 
 function world(reply: (req: ChatRequest) => string) {
@@ -39,5 +40,41 @@ describe("scheduled events", () => {
     expect(describeScene(store, PLAYER_ID).text).toMatch(/Time: Day 1, 19:\d\d \(evening\)/);
     log.undo();
     expect(appointments(store)).toHaveLength(0);
+  });
+});
+
+describe("research", () => {
+  it("looks up a real thing the story mentions in the background and shows the note to the narrator once it is in", async () => {
+    const reqs: ChatRequest[] = [];
+    const { store, log, deps } = world((req) => {
+      reqs.push(req);
+      const sys = String(req.messages[0]?.content);
+      if (/keep the game's records/.test(sys)) return JSON.stringify({ references: [{ subject: "Hollow Knight (video game)", query: "Hollow Knight video game bosses" }] });
+      if (req.web) return "Bosses include the [False Knight](https://x.example) and Hornet.";
+      return "<ops></ops>Mara shrugs. \"Never heard of Hollow Knight.\"";
+    });
+    const s = { ...getSettings(store), research: true };
+    store.setMeta("settings", s);
+    await playTurn(deps, "say", "Ever played Hollow Knight?");
+    const look = reqs.find((r) => r.web);
+    expect(look?.messages.at(-1)?.content).toBe("Hollow Knight video game bosses");
+    await playTurn(deps, "say", "The Hollow Knight bosses are brutal.");
+    expect(references(store).map((r) => r.note)).toEqual(["Bosses include the False Knight and Hornet."]);
+    const narr = reqs.filter((r) => /Story so far/.test(String(r.messages[1]?.content))).at(-1);
+    expect(String(narr?.messages[1]?.content)).toMatch(/Real-world reference[\s\S]*False Knight/);
+    log.undo();
+    expect(references(store)).toHaveLength(0);
+  });
+});
+
+describe("waitTarget", () => {
+  it("lands an explicit wait exactly on the named scheduled event", () => {
+    const { store } = world(() => "");
+    const now = clockMinutes(store);
+    applyOps(store, [{ op: "appointment", text: "supper at Mara's", at: now + 125, who: [] }], { source: "engine", turn: 1 });
+    expect(waitTarget(store, "wait by the fire until supper")).toBe(125);
+    expect(waitTarget(store, "wait for Mara")).toBe(125);
+    expect(waitTarget(store, "sit by the fire")).toBeNull();
+    expect(waitTarget(store, "wait until dawn")).toBeNull();
   });
 });

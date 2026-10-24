@@ -213,9 +213,9 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "music", "musicStyle", "musicModel"] as const;
-const BOOLS = new Set<string>(["music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
-const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
+const BOOLS = new Set<string>(["research", "music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
+const NUMERIC = new Set<string>(["researchMax", "thoughtsPerTurn", "contextTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;

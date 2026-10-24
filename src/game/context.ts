@@ -48,6 +48,9 @@ export interface WorldSettings {
   worldEventDays: number;
   /** How far and fast news travels. */
   connectedness: "isolated" | "regional" | "global";
+  /** Web lookups of real things the story mentions; only a short search query leaves the device (to Exa). */
+  research: boolean;
+  researchMax: number;
   /** Generated instrumental background music (off by default; not zero-data-retention). */
   music: boolean;
   musicStyle: string;
@@ -93,6 +96,8 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   worldEvents: true,
   worldEventDays: 7,
   connectedness: "regional",
+  research: false,
+  researchMax: 20,
   music: false,
   musicStyle: "",
   musicModel: "google/lyria-3-pro-preview",

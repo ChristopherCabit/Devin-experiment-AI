@@ -21,8 +21,8 @@ import {
   slugify,
 } from "../world/queries.js";
 import { memberSheet, seeded } from "../world/variance.js";
-import { Appointment, Secret, Sheet, Thread, WorldEvent } from "../world/types.js";
-import { appointments, secrets, threads, worldEvents } from "../world/queries.js";
+import { Appointment, Reference, Secret, Sheet, Thread, WorldEvent } from "../world/types.js";
+import { appointments, references, secrets, threads, worldEvents } from "../world/queries.js";
 import { AUTHOR_ONLY_OPS, ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
 
 export interface Limits {
@@ -336,6 +336,13 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       if (op.note) t.notes = [...t.notes, op.note].slice(-6);
       t.touched_turn = ctx.turn;
       store.setMeta("threads", list);
+      return {};
+    }
+
+    case "reference": {
+      const list = references(store).filter((r) => r.subject.toLowerCase() !== op.subject.toLowerCase());
+      list.push(Reference.parse({ subject: op.subject, note: op.note, turn: ctx.turn }));
+      store.setMeta("references", list.slice(-100));
       return {};
     }
 

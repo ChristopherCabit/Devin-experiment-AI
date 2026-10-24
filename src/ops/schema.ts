@@ -99,6 +99,7 @@ export const Op = z.discriminatedUnion("op", [
       known: z.boolean().optional(),
     })
     .strict(),
+  z.object({ op: z.literal("reference"), subject: z.string().trim().min(1).max(120), note: z.string().trim().min(1).max(1500) }).strict(),
   z.object({ op: z.literal("appointment"), text: z.string().trim().min(1).max(200), at: z.number().int().min(0), who: z.array(EntityId).default([]) }).strict(),
   z.object({ op: z.literal("world_event"), text: z.string().trim().min(1).max(600), reach: z.enum(REACHES).default("local"), origin: EntityId.nullable().default(null) }).strict(),
   z.object({ op: z.literal("life_event"), npc: EntityId, text: Text }).strict(),

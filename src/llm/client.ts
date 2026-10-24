@@ -15,6 +15,8 @@ export interface ChatRequest {
   reasoning?: "off" | "low" | "default";
   /** Stream the completion, called with the text so far as it arrives. */
   onText?: (sofar: string) => void;
+  /** Ground the answer in this many web search results (OpenRouter web plugin, Exa). */
+  web?: number;
 }
 
 export interface ChatResult {
@@ -91,6 +93,7 @@ export class LlmClient {
       ...(req.json ? { response_format: { type: "json_object" } } : {}),
       ...(mode === "off" ? { reasoning: { enabled: false } } : mode === "low" ? { reasoning: { effort: "low" } } : {}),
       ...(req.onText ? { stream: true } : {}),
+      ...(req.web ? { plugins: [{ id: "web", engine: "exa", max_results: req.web }] } : {}),
       provider: { zdr: true, data_collection: "deny" },
     };
   }
