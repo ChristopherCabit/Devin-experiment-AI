@@ -1,12 +1,15 @@
+import { MusicBank, MusicDirector, tagScene, type Track, type TrackInfo } from "../game/music.js";
+import { generateMusic } from "../llm/music.js";
 import { z } from "zod";
 import { TurnLog } from "../engine/turns.js";
-import { DEATH_POLICIES, DEFAULT_SETTINGS, getSettings, type WorldSettings } from "../game/context.js";
+import { DEATH_POLICIES, DEFAULT_SETTINGS, getSettings, Progression, type WorldSettings } from "../game/context.js";
 import { playTurn, type PlayKind, type TurnOutput } from "../game/pipeline.js";
 import { PLAYER_ID, STARTER, type Seed } from "../game/seeds.js";
+import { AdventureSpec, blankDraft, buildSeed, generateDraft, proposeStats, SetupError, WorldBrief, type WorldDraft, hourFromText } from "../game/setup.js";
 import { LlmClient, type ChatRequest, type ChatResult, type FetchLike } from "../llm/client.js";
 import { SpendCapError, SpendMeter } from "../llm/spend.js";
 import type { Files } from "../platform/files.js";
-import { charProps, clockMinutes } from "../world/queries.js";
+import { charProps, clockMinutes, secrets, threads, worldEvents } from "../world/queries.js";
 import type { Entity } from "../world/types.js";
 import type { WorldStore } from "../world/store.js";
 import { SaveManager, type SaveInfo } from "./saves.js";
@@ -40,15 +43,37 @@ const SettingsBody = z
     style: z.string().max(2000),
     intensity: z.enum(["none", "mild", "explicit"]),
     limits: z.string().max(2000),
+    corrections: z.string().max(2000),
     deathPolicy: z.enum(DEATH_POLICIES),
     narratorModel: z.string().min(1).max(120),
     parserModel: z.string().min(1).max(120),
+    narratorReasoning: z.enum(["off", "low", "default"]),
     contextTokens: z.number().int().min(4000).max(128000),
+    powerCeiling: z.number().int().min(1).max(10),
+    thoughtsPerTurn: z.number().int().min(0).max(5),
+    length: z.number().int().min(30).max(800),
+    asides: z.boolean(),
+    threads: z.boolean(),
+    threadsShown: z.number().int().min(0).max(5),
+    influence: z.enum(["subtle", "pressing"]),
+    npcLives: z.boolean(),
+    lifeEveryHours: z.number().min(1).max(168),
+    lifeTracked: z.number().int().min(0).max(20),
+    worldEvents: z.boolean(),
+    worldEventDays: z.number().min(0.5).max(365),
+    connectedness: z.enum(["isolated", "regional", "global"]),
+    research: z.boolean(),
+    researchMax: z.number().int().min(0).max(500),
+    music: z.boolean(),
+    musicStyle: z.string().max(120),
+    musicModel: z.string().min(1).max(120),
+    unboundedPower: z.boolean(),
+    progression: Progression,
   })
   .partial();
 const ConfigBody = z.object({ apiKey: z.string().max(400).nullable().optional(), capUsd: z.number().min(0).max(1000).optional() });
 
-function parse<T>(schema: z.ZodType<T>, body: unknown): T {
+function parse<S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> {
   const r = schema.safeParse(body);
   if (!r.success) throw new GameError("invalid input");
   return r.data;
@@ -57,9 +82,12 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 export function seedWorld(store: WorldStore, log: TurnLog, seed: Seed = STARTER): void {
   store.db.exec("DELETE FROM entities; DELETE FROM facts; DELETE FROM meta; DELETE FROM turns;");
   store.setMeta("settings", { ...DEFAULT_SETTINGS, ...seed.settings });
-  const { results } = log.commit({ kind: "author", input: "new world", ops: seed.ops, source: "author" });
+  const timed = seed.ops.some((o) => o.op === "time_advance");
+  const start = timed ? [] : [{ op: "time_advance" as const, minutes: (hourFromText(seed.opening) ?? 10) * 60 }];
+  const { results } = log.commit({ kind: "author", input: "new world", ops: [...seed.ops, ...start].filter((o) => o.op !== "time_advance" || o.minutes > 0), source: "author" });
   const bad = results.find((r) => !r.ok);
   if (bad && !bad.ok) throw new Error(`seed failed: ${bad.reason}`);
+  store.setMeta("life_tick", clockMinutes(store));
   log.commit({ kind: "system", input: "", output: seed.opening, ops: [], source: "engine" });
 }
 
@@ -70,6 +98,8 @@ export interface GameOptions {
   fetch?: FetchLike;
   /** Replaces the OpenRouter client (tests). */
   llm?: (meter: SpendMeter) => Llm;
+  /** Replaces music generation (tests). */
+  music?: typeof generateMusic;
 }
 
 export type GameState = ReturnType<Game["state"]>;
@@ -80,6 +110,7 @@ export type GameState = ReturnType<Game["state"]>;
  */
 export class Game {
   private busy: Promise<unknown> = Promise.resolve();
+  private director: MusicDirector | null = null;
 
   private constructor(
     readonly saves: SaveManager,
@@ -163,12 +194,45 @@ export class Game {
     return this.serial(async () => ({ ...(await run()), state: this.state() }));
   }
 
-  turn(kind: PlayKind, input: string): Promise<TurnOutput & { state: GameState }> {
+  turn(kind: PlayKind, input: string, onText?: (prose: string) => void): Promise<TurnOutput & { state: GameState }> {
     const b = parse(TurnBody, { kind, input });
     return this.play(() => {
       const llm = this.llm();
-      return playTurn({ ...this.W, llm, playerId: PLAYER_ID }, b.kind, b.input ?? "");
+      return playTurn({ ...this.W, llm, playerId: PLAYER_ID, ...(onText ? { onText } : {}) }, b.kind, b.input ?? "");
     });
+  }
+
+  /** The background track for a passage, or null to keep the current one. Runs outside the turn queue and never changes the save. */
+  async music(passage: string, force = false): Promise<Track | null> {
+    const s = getSettings(this.W.store);
+    const apiKey = this.saves.getMeta(KEY);
+    if (!s.music || !passage.trim() || (!apiKey && !this.opts.llm)) return null;
+    this.director ??= new MusicDirector(this.opts.files);
+    const llm = this.llm();
+    return this.director.next(
+      passage,
+      {
+        style: s.musicStyle,
+        model: s.musicModel,
+        tag: (p) => tagScene(llm, s.parserModel, p),
+        generate: (prompt) => (this.opts.music ?? generateMusic)({ apiKey: String(apiKey), meter: this.meter, fetch: this.opts.fetch, model: s.musicModel, prompt }),
+      },
+      force,
+    );
+  }
+
+  /** Tracks saved on this device (shared by all saves). */
+  musicBank(): Promise<TrackInfo[]> {
+    return new MusicBank(this.opts.files).list();
+  }
+
+  musicAudio(key: string): Promise<Uint8Array | null> {
+    return new MusicBank(this.opts.files).audio(key);
+  }
+
+  async deleteTrack(key: string): Promise<void> {
+    await new MusicBank(this.opts.files).remove(key);
+    this.director?.forget(key);
   }
 
   private undoAllowed() {
@@ -212,6 +276,16 @@ export class Game {
     });
   }
 
+  /** Folds a duplicate into another entity of the same kind; one undo restores both. */
+  mergeEntities(from: string, into: string): Promise<Entity | null> {
+    return this.serial(() => {
+      const { results } = this.W.log.commit({ kind: "author", input: `merge ${from} into ${into}`, source: "author", ops: [{ op: "merge_entity", from, into }] });
+      const r = results[0];
+      if (!r?.ok) throw new GameError(r && !r.ok ? r.reason : "failed");
+      return this.W.store.getEntity(into);
+    });
+  }
+
   createEntity(body: unknown): Promise<Entity | null> {
     const b = parse(CreateBody, body);
     return this.serial(() => {
@@ -245,6 +319,49 @@ export class Game {
       await this.saves.load(await this.saves.create(name || "New adventure"));
       return this.state();
     });
+  }
+
+  /** Drafts a world for the setup screen: generated by the model, or just the starting location. Nothing is saved. */
+  async draftWorld(body: unknown): Promise<WorldDraft> {
+    const b = parse(z.object({ brief: WorldBrief, mode: z.enum(["generate", "blank"]), npcs: z.boolean().default(true), place: z.string().trim().min(1).max(80).default("Somewhere"), room: z.string().trim().min(1).max(80).default("Here") }), body);
+    if (b.mode === "blank") return blankDraft(b.brief, b.place, b.room);
+    if (this.meter.status().blocked) throw new SpendCapError();
+    try {
+      return (await generateDraft(this.llm(), getSettings(this.W.store).narratorModel, b.brief, b.npcs)).draft;
+    } catch (e) {
+      throw e instanceof SetupError ? new GameError(e.message) : e;
+    }
+  }
+
+  async proposeStats(body: unknown) {
+    const b = parse(z.object({ description: z.string().trim().min(1).max(2000), brief: WorldBrief }), body);
+    if (this.meter.status().blocked) throw new SpendCapError();
+    return (await proposeStats(this.llm(), getSettings(this.W.store).parserModel, b.description, b.brief)).stats;
+  }
+
+  createAdventure(body: unknown): Promise<GameState> {
+    const spec = parse(AdventureSpec, body);
+    let seed: Seed;
+    try {
+      seed = buildSeed(spec);
+    } catch (e) {
+      throw e instanceof SetupError ? new GameError(e.message) : e;
+    }
+    return this.serial(async () => {
+      await this.saves.load(await this.saves.create(spec.name, (store, log) => seedWorld(store, log, seed)));
+      return this.state();
+    });
+  }
+
+  /** Every secret, for the Edit tab's spoiler view. */
+  threads() {
+    return threads(this.W.store);
+  }
+  worldEvents() {
+    return worldEvents(this.W.store);
+  }
+  secrets() {
+    return secrets(this.W.store);
   }
 
   loadSave(id: string): Promise<GameState> {

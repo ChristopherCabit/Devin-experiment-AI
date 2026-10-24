@@ -171,6 +171,16 @@ export class WorldStore {
     return next;
   }
 
+  setFactSubjects(id: number, subjects: string[]): void {
+    this.touch("facts", String(id));
+    this.stmt("UPDATE facts SET subjects = ? WHERE id = ?").run(JSON.stringify(subjects), id);
+  }
+
+  deleteFact(id: number): void {
+    this.touch("facts", String(id));
+    this.stmt("DELETE FROM facts WHERE id = ?").run(id);
+  }
+
   facts(): Fact[] {
     const rows = this.stmt("SELECT * FROM facts ORDER BY id").all() as unknown as FactRow[];
     return rows.map(rowToFact);

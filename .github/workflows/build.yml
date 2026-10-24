@@ -52,6 +52,15 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - run: npm ci
+      - name: Restore the fixed signing key (APK updates keep saves only with the same key)
+        env:
+          ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$ANDROID_DEBUG_KEYSTORE_B64" ]; then
+            mkdir -p ~/.android && echo "$ANDROID_DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set; this APK will not install over existing installs"
+          fi
       - run: |
           export NDK_HOME="$ANDROID_HOME/ndk/26.3.11579264"
           npx tauri android build --apk --debug --target aarch64 x86_64

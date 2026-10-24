@@ -20,6 +20,9 @@ import {
   roomProps,
   slugify,
 } from "../world/queries.js";
+import { memberSheet, seeded } from "../world/variance.js";
+import { Appointment, Reference, Secret, Sheet, Thread, WorldEvent } from "../world/types.js";
+import { appointments, references, secrets, threads, worldEvents } from "../world/queries.js";
 import { AUTHOR_ONLY_OPS, ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
 
 export interface Limits {
@@ -63,6 +66,17 @@ function need(store: WorldStore, id: string, kinds?: readonly EntityKind[]): Ent
   if (!e) fail(`unknown entity ${id}`);
   if (kinds && !kinds.includes(e.kind)) fail(`${id} is a ${e.kind}, expected ${kinds.join("/")}`);
   return e;
+}
+
+/** `into` with any keys it lacks (or has as null) filled from `from`; arrays are unioned. */
+function fillMissing(into: unknown, from: unknown): unknown {
+  if (Array.isArray(into) && Array.isArray(from)) return [...into, ...from.filter((x) => !into.some((y) => JSON.stringify(y) === JSON.stringify(x)))];
+  if (into && from && typeof into === "object" && typeof from === "object" && !Array.isArray(into) && !Array.isArray(from)) {
+    const out: Record<string, unknown> = { ...(into as Record<string, unknown>) };
+    for (const [k, v] of Object.entries(from)) out[k] = out[k] === undefined || out[k] === null ? v : fillMissing(out[k], v);
+    return out;
+  }
+  return into ?? from;
 }
 
 function editChar(store: WorldStore, id: string, fn: (p: CharacterProps, e: Entity) => void): void {
@@ -215,6 +229,210 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       return {};
     }
 
+    case "update_character": {
+      editChar(store, op.id, (p, e) => {
+        if (ctx.source === "narrator" && p.is_player) fail("the narrator cannot edit the player character");
+        if (op.sheet) {
+          if (ctx.source === "narrator") fail("sheets are set by the engine");
+          p.sheet = Sheet.parse(op.sheet);
+        }
+        const rec = p as Record<string, unknown>;
+        for (const k of ["description", "appearance", "traits", "goals", "backstory"] as const) if (op[k]) rec[k] = op[k];
+        for (const path of ["attributes", "skills", "abilities"] as const) {
+          for (const [k, v] of Object.entries(op.add_stats?.[path] ?? {})) if (!(k in p.sheet[path])) p.sheet[path][k] = v;
+        }
+        if (op.aliases) e.aliases = [...new Set([...e.aliases, ...op.aliases])];
+      });
+      return {};
+    }
+
+    case "group_count":
+      editChar(store, op.id, (p) => {
+        if (!p.group) fail(`${op.id} is not a group`);
+        p.group.count = Math.max(0, p.group.count + op.delta);
+      });
+      return {};
+
+    case "split_member": {
+      const g = need(store, op.group, ["character"]);
+      const gp = charProps(g);
+      if (!gp.group || gp.group.count < 1) fail(`${op.group} has no members left to single out`);
+      const id = op.id ?? freshId(store, "character", op.name);
+      if (!id.startsWith("character:")) fail("id prefix must match kind");
+      if (store.getEntity(id)) fail(`${id} already exists`);
+      const base = Object.fromEntries(Object.entries(gp).filter(([k]) => !["group", "mind", "sheet"].includes(k)));
+      const extra = Object.fromEntries(Object.entries(op.props).filter(([k]) => !["sheet", "group", "is_player"].includes(k)));
+      const props = CharacterProps.parse({
+        ...base,
+        ...extra,
+        sheet: memberSheet(gp.sheet, seeded(`${g.id}|${id}|${gp.group.count}`)),
+        group: null,
+        member_of: g.id,
+      });
+      props.scene = { ...props.scene, zone: op.zone ?? gp.scene.zone, hands: { left: null, right: null }, worn: {}, relations: [] };
+      store.putEntity({ id, kind: "character", name: op.name, aliases: [], parent_id: g.parent_id, props, created_turn: ctx.turn });
+      store.putEntity({ ...g, props: { ...gp, group: { count: gp.group.count - 1 } } });
+      return { id };
+    }
+
+    case "practice":
+      editChar(store, op.character, (p) => {
+        p.sheet.progress[op.key] = op.value;
+      });
+      return {};
+
+    case "remove_entity": {
+      const e = need(store, op.id);
+      if (e.kind === "character" && charProps(e).is_player) fail("cannot remove the player");
+      if (store.children(e.id).length) fail(`${e.name} still contains things`);
+      if (PORTABLE.includes(e.kind)) detach(store, e.id);
+      store.deleteEntity(e.id);
+      return {};
+    }
+
+    case "retract_fact": {
+      if (ctx.source === "narrator") fail("the narrator cannot retract facts");
+      if (!store.facts().some((f) => f.id === op.id)) fail(`no fact #${op.id}`);
+      store.deleteFact(op.id);
+      return {};
+    }
+
+    case "merge_entity": {
+      if (ctx.source === "narrator") fail("the narrator cannot merge");
+      const from = need(store, op.from);
+      const into = need(store, op.into);
+      if (from.id === into.id) fail("cannot merge something into itself");
+      if (from.kind !== into.kind) fail("can only merge things of the same kind");
+      if ((from.props as { is_player?: unknown }).is_player) fail("cannot merge the player away");
+      const swap = <T>(v: T): T => JSON.parse(JSON.stringify(v).split(`"${from.id}"`).join(`"${into.id}"`)) as T;
+      for (const c of store.children(from.id)) store.putEntity({ ...c, parent_id: into.id });
+      let props = swap(fillMissing(into.props, from.props)) as Record<string, unknown>;
+      const scene = props.scene as { relations?: { target: string }[] } | undefined;
+      if (scene?.relations) scene.relations = scene.relations.filter((r, i, all) => r.target !== into.id && all.findIndex((x) => JSON.stringify(x) === JSON.stringify(r)) === i);
+      if (into.kind === "character") props = CharacterProps.parse(props);
+      const aliases = [...new Set([...into.aliases, from.name, ...from.aliases])].filter((a) => a.toLowerCase() !== into.name.toLowerCase());
+      store.deleteEntity(from.id);
+      store.putEntity({ ...into, aliases, props });
+      for (const e of store.allEntities()) if (e.id !== into.id && JSON.stringify(e).includes(`"${from.id}"`)) store.putEntity(swap(e));
+      for (const key of ["secrets", "threads", "appointments", "world_events"]) {
+        const v = store.getMeta<unknown>(key, null);
+        if (v !== null && JSON.stringify(v).includes(`"${from.id}"`)) store.setMeta(key, swap(v));
+      }
+      for (const f of store.facts()) if (f.subjects.includes(from.id)) store.setFactSubjects(f.id, [...new Set(f.subjects.map((s) => (s === from.id ? into.id : s)))]);
+      return {};
+    }
+
+    case "rename": {
+      const e = need(store, op.id);
+      if (ctx.source === "narrator" && (e.props as { is_player?: unknown }).is_player) fail("the narrator cannot rename the player character");
+      if (e.name.toLowerCase() === op.name.toLowerCase()) fail(`${op.id} is already named ${op.name}`);
+      const taken = ctx.source === "narrator" && store.entitiesOfKind(e.kind).find((x) => x.id !== e.id && x.name.toLowerCase() === op.name.toLowerCase());
+      if (taken) fail(`${op.name} is already ${taken.id}; a duplicate is merged by the player, not renamed`);
+      const aliases = [...new Set([...e.aliases, e.name])].filter((a) => a.toLowerCase() !== op.name.toLowerCase());
+      store.putEntity({ ...e, name: op.name, aliases });
+      return {};
+    }
+
+    case "secret": {
+      for (const id of [...op.subjects, ...op.known_by]) need(store, id);
+      const list = secrets(store);
+      const id = `secret:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      list.push(Secret.parse({ ...op, id, created_turn: ctx.turn }));
+      store.setMeta("secrets", list);
+      return { id };
+    }
+
+    case "reveal":
+    case "hint":
+    case "secret_urgency": {
+      const list = secrets(store);
+      const sec = list.find((x) => x.id === op.id);
+      if (!sec) fail(`unknown secret ${op.id}`);
+      if (op.op === "reveal") {
+        if (sec.revealed) fail(`${op.id} is already known`);
+        sec.revealed = true;
+        sec.revealed_turn = ctx.turn;
+      } else if (op.op === "hint") sec.hinted_turn = ctx.turn;
+      else sec.urgency = op.to;
+      store.setMeta("secrets", list);
+      return {};
+    }
+
+    case "thread": {
+      for (const id of op.participants) need(store, id);
+      if (op.place) need(store, op.place);
+      const list = threads(store);
+      if (list.some((t) => t.status === "open" && t.title.toLowerCase() === op.title.toLowerCase())) fail(`thread "${op.title}" already open`);
+      const id = `thread:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      const deadline = op.deadline_hours ? clockMinutes(store) + Math.round(op.deadline_hours * 60) : null;
+      const rest = { title: op.title, text: op.text, participants: op.participants, place: op.place, urgency: op.urgency, known: op.known };
+      list.push(Thread.parse({ ...rest, id, deadline, created_turn: ctx.turn, touched_turn: ctx.turn }));
+      store.setMeta("threads", list);
+      return { id };
+    }
+
+    case "thread_update": {
+      const list = threads(store);
+      const t = list.find((x) => x.id === op.id);
+      if (!t) fail(`unknown thread ${op.id}`);
+      if (op.status) t.status = op.status;
+      if (op.urgency) t.urgency = op.urgency;
+      if (op.known !== undefined) t.known = op.known;
+      if (op.note) t.notes = [...t.notes, op.note].slice(-6);
+      t.touched_turn = ctx.turn;
+      store.setMeta("threads", list);
+      return {};
+    }
+
+    case "reference": {
+      const list = references(store).filter((r) => r.subject.toLowerCase() !== op.subject.toLowerCase());
+      list.push(Reference.parse({ subject: op.subject, note: op.note, turn: ctx.turn }));
+      store.setMeta("references", list.slice(-100));
+      return {};
+    }
+
+    case "appointment": {
+      for (const id of op.who) need(store, id);
+      const now = clockMinutes(store);
+      const key = op.text.toLowerCase();
+      const list = appointments(store).filter((a) => a.text.toLowerCase() !== key && a.at >= now - 1440);
+      list.push(Appointment.parse({ text: op.text, at: op.at, who: op.who, created_turn: ctx.turn }));
+      store.setMeta("appointments", list.sort((a, b) => a.at - b.at).slice(-12));
+      return {};
+    }
+
+    case "appointment_update": {
+      const list = appointments(store);
+      const i = list.findIndex((a) => a.text.toLowerCase() === op.text.toLowerCase());
+      const a = list[i];
+      if (!a) return {};
+      if (op.status === "moved" && op.at !== null) list[i] = { ...a, was: a.was ?? a.at, at: op.at };
+      else list.splice(i, 1);
+      store.setMeta("appointments", list.sort((x, y) => x.at - y.at));
+      return {};
+    }
+
+    case "world_event": {
+      if (op.origin) need(store, op.origin);
+      const list = worldEvents(store);
+      const id = `event:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      list.push(WorldEvent.parse({ id, text: op.text, reach: op.reach, origin: op.origin, at: clockMinutes(store), created_turn: ctx.turn }));
+      store.setMeta("world_events", list.slice(-30));
+      return { id };
+    }
+
+    case "life_event": {
+      const e = need(store, op.npc, ["character"]);
+      const life = Array.isArray(e.props.life) ? (e.props.life as unknown[]) : [];
+      store.putEntity({ ...e, props: { ...e.props, life: [...life, { text: op.text, at: clockMinutes(store) }].slice(-4) } });
+      return {};
+    }
+
+    case "life_tick": {
+      store.setMeta("life_tick", clockMinutes(store));
+      return {};
+    }
+
     case "set_zone": {
       const e = need(store, op.id, ["character", ...PORTABLE]);
       const parent = e.parent_id ? store.getEntity(e.parent_id) : null;
@@ -340,8 +558,9 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       guardPlayerMind(store, op.npc, ctx);
       editChar(store, op.npc, (p) => {
         const isNew = !(op.key in p.mind.thoughts);
-        if (isNew && Object.keys(p.mind.thoughts).length >= limits.maxThoughts) {
-          fail(`brain full (${limits.maxThoughts}); forget a thought first`);
+        const keys = Object.keys(p.mind.thoughts);
+        if (isNew && keys.length >= limits.maxThoughts) {
+          p.mind.thoughts = Object.fromEntries(Object.entries(p.mind.thoughts).slice(keys.length - limits.maxThoughts + 1));
         }
         p.mind.thoughts[op.key] = op.text;
       });
