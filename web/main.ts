@@ -15,7 +15,7 @@ function clockText(m: number) {
   return `Day ${d} ${h}:${mm}`;
 }
 
-function render(s: GameState) {
+function render(s: GameState, jump = false) {
   $("title").textContent = s.settings.title;
   const hp = s.sheet?.resources?.hp as { value: number; max?: number } | undefined;
   $("status").textContent = [s.location, s.zone, clockText(s.clock), hp ? `HP ${hp.value}/${hp.max ?? "?"}` : null, ...s.conditions].filter(Boolean).join(" · ");
@@ -34,7 +34,7 @@ function render(s: GameState) {
       story.append(p);
     }
   }
-  story.scrollTop = story.scrollHeight;
+  if (jump) story.scrollTop = story.scrollHeight;
   $("spend").textContent = `Spend this month: $${s.spend.spent.toFixed(3)} of $${s.spend.cap}` + (s.spend.warn ? " (near cap)" : "");
   const sh = s.sheet;
   if (sh) {
@@ -66,11 +66,9 @@ $("turn-form").onsubmit = async (ev) => {
   pending.className = "pending";
   pending.textContent = "…";
   $("story").append(pending);
-  $("story").scrollTop = $("story").scrollHeight;
   try {
     const out = await game.turn(kind, input, (t) => {
       pending.textContent = t || "…";
-      $("story").scrollTop = $("story").scrollHeight;
     });
     $("input").value = "";
     showTurn(out);
@@ -272,7 +270,7 @@ function loadSaves() {
     };
     if (!s.active)
       add("Load", async () => {
-        render(await game.loadSave(s.id));
+        render(await game.loadSave(s.id), true);
         loadSettings();
         say(`Loaded ${s.name}.`);
       });
@@ -414,7 +412,7 @@ $("btn-n-start").onclick = async () => {
   const name = $("n-name").value.trim() || "New adventure";
   try {
     if ($<HTMLSelectElement>("n-template").value === "starter") {
-      render(await game.newSave(name));
+      render(await game.newSave(name), true);
     } else {
       const b = brief();
       const d = draft ?? (await game.draftWorld({ brief: b, mode: "blank", place: $("n-place").value.trim() || undefined, room: $("n-room").value.trim() || undefined }));
@@ -475,7 +473,7 @@ try {
   game = await Game.open({ files: platform.files });
   $("boot-msg").hidden = true;
   $("app").hidden = false;
-  render(game.state());
+  render(game.state(), true);
 } catch (e) {
   $("boot-msg").textContent = `Failed to start: ${errText(e)}`;
 }

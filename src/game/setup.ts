@@ -40,6 +40,7 @@ const DraftNpc = z.object({
 
 export const WorldDraft = z.object({
   opening: z.string().trim().min(1).max(4000),
+  start_hour: z.number().int().min(0).max(23).nullable().catch(null),
   region: Name.catch("The World"),
   start: z.object({ place: Name, room: Name, zones: z.array(Name).max(12).catch([]), description: Str(1000).catch("") }),
   places: z
@@ -167,6 +168,7 @@ export function buildSeed(spec: z.infer<typeof AdventureSpec>): Seed {
   for (const sec of w.secrets) {
     ops.push({ op: "secret", text: sec.text, kind: sec.kind, urgency: sec.urgency, subjects: ref(sec.about), known_by: ref(sec.known_by).filter((x) => x.startsWith("character:")) });
   }
+  ops.push({ op: "time_advance", minutes: (w.start_hour ?? hourFromText(w.opening) ?? 10) * 60 });
   const settings: Partial<WorldSettings> = {
     progression: b.progression,
     title: b.title,
@@ -181,6 +183,20 @@ export function buildSeed(spec: z.infer<typeof AdventureSpec>): Seed {
   return { settings, ops, opening: w.opening };
 }
 
+/** The time of day a passage implies, if it says. */
+export function hourFromText(t: string): number | null {
+  const cues: [RegExp, number][] = [
+    [/\bmidnight\b/i, 0],
+    [/\b(?:dawn|daybreak|sunrise|first light)\b/i, 6],
+    [/\b(?:noon|midday)\b/i, 12],
+    [/\b(?:dusk|sunset|twilight|evening|supper)\b/i, 19],
+    [/\b(?:afternoon)\b/i, 15],
+    [/\b(?:morning|breakfast)\b/i, 8],
+    [/\b(?:night|nightfall|moonlight)\b/i, 22],
+  ];
+  return cues.find(([re]) => re.test(t))?.[1] ?? null;
+}
+
 /** A world with only the starting location and the player's own opening text. */
 export function blankDraft(b: WorldBrief, place: string, room: string): WorldDraft {
   return WorldDraft.parse({ opening: b.situation || `You are in ${room}.`, start: { place, room }, places: [], npcs: [] });
@@ -189,7 +205,7 @@ export function blankDraft(b: WorldBrief, place: string, room: string): WorldDra
 const json = (t: string): unknown => JSON.parse(t.replace(/^```(?:json)?|```$/g, "").trim());
 
 const WORLD_SYSTEM = `You design the starting state of a second-person text adventure from the player's brief. Output ONLY JSON:
-{"opening": "2-4 paragraphs, second person, present tense, ending where the player can act", "region": str, "start": {"place": str, "room": str, "zones": [str], "description": str}, "places": [{"name": str, "rooms": [{"name": str, "description": str}]}], "npcs": [{"name": str, "age": int|null, "description": str, "traits": str, "goals": str, "room": str, "sheet": {"power_tier": int, "attributes": {"strength","agility","wits","charm"}, "skills": {..}, "resources": {"hp": {"value": n, "max": n}}}, "count": int|null, "thoughtfulness": 0-5 (inner monologue from intellect and personality: 1 impulsive, 2 ordinary, 4 scheming or anxious)}],
+{"opening": "2-4 paragraphs, second person, present tense, ending where the player can act", "start_hour": 0-23 (the hour of day the opening takes place; pick one that fits the situation, and make the opening consistent with it), "region": str, "start": {"place": str, "room": str, "zones": [str], "description": str}, "places": [{"name": str, "rooms": [{"name": str, "description": str}]}], "npcs": [{"name": str, "age": int|null, "description": str, "traits": str, "goals": str, "room": str, "sheet": {"power_tier": int, "attributes": {"strength","agility","wits","charm"}, "skills": {..}, "resources": {"hp": {"value": n, "max": n}}}, "count": int|null, "thoughtfulness": 0-5 (inner monologue from intellect and personality: 1 impulsive, 2 ordinary, 4 scheming or anxious)}],
  "secrets": [{"text": str, "kind": "boon"|"danger"|"horror"|"twist", "urgency": "dormant"|"stirring"|"active", "about": [names of places/rooms/NPCs it belongs to], "known_by": [NPC names]}],
  "cultivation": {"realms": [str, ...], "resource": str|null} | null}
 Rooms in "places" may have "notable": true when something important is there (a crypt, a vault); ordinary rooms are not notable.

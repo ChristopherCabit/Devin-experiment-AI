@@ -3,7 +3,7 @@ import { TurnLog } from "../engine/turns.js";
 import { DEATH_POLICIES, DEFAULT_SETTINGS, getSettings, Progression, type WorldSettings } from "../game/context.js";
 import { playTurn, type PlayKind, type TurnOutput } from "../game/pipeline.js";
 import { PLAYER_ID, STARTER, type Seed } from "../game/seeds.js";
-import { AdventureSpec, blankDraft, buildSeed, generateDraft, proposeStats, SetupError, WorldBrief, type WorldDraft } from "../game/setup.js";
+import { AdventureSpec, blankDraft, buildSeed, generateDraft, proposeStats, SetupError, WorldBrief, type WorldDraft, hourFromText } from "../game/setup.js";
 import { LlmClient, type ChatRequest, type ChatResult, type FetchLike } from "../llm/client.js";
 import { SpendCapError, SpendMeter } from "../llm/spend.js";
 import type { Files } from "../platform/files.js";
@@ -74,9 +74,12 @@ function parse<S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> {
 export function seedWorld(store: WorldStore, log: TurnLog, seed: Seed = STARTER): void {
   store.db.exec("DELETE FROM entities; DELETE FROM facts; DELETE FROM meta; DELETE FROM turns;");
   store.setMeta("settings", { ...DEFAULT_SETTINGS, ...seed.settings });
-  const { results } = log.commit({ kind: "author", input: "new world", ops: seed.ops, source: "author" });
+  const timed = seed.ops.some((o) => o.op === "time_advance");
+  const start = timed ? [] : [{ op: "time_advance" as const, minutes: (hourFromText(seed.opening) ?? 10) * 60 }];
+  const { results } = log.commit({ kind: "author", input: "new world", ops: [...seed.ops, ...start].filter((o) => o.op !== "time_advance" || o.minutes > 0), source: "author" });
   const bad = results.find((r) => !r.ok);
   if (bad && !bad.ok) throw new Error(`seed failed: ${bad.reason}`);
+  store.setMeta("life_tick", clockMinutes(store));
   log.commit({ kind: "system", input: "", output: seed.opening, ops: [], source: "engine" });
 }
 

@@ -115,6 +115,7 @@ describe("off-screen lives", () => {
     const route = (req: ChatRequest) => (/off-screen lives/.test(String(req.messages[0]?.content)) ? period : "<ops></ops>Time passes.");
     for (const undo of [false, true]) {
       const { store, log, author, deps } = world(route);
+      store.setMeta("life_tick", 0);
       author([{ op: "move", id: "character:rook", to: "room:upstairs" }, { op: "time_advance", minutes: 300 }]);
       await playTurn(deps, "do", "wait at the bar");
       if (undo) log.undo();

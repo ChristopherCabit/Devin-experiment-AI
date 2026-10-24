@@ -93,7 +93,12 @@ export function newsText(store: WorldStore, playerId: string, s: WorldSettings):
 /** Whether an off-screen period is due. */
 export function lifeDue(store: WorldStore, s: WorldSettings): boolean {
   if (!s.npcLives && !s.worldEvents) return false;
-  return clockMinutes(store) - store.getMeta<number>("life_tick", 0) >= s.lifeEveryHours * H;
+  const last = store.getMeta<number>("life_tick", -1);
+  if (last < 0) {
+    store.setMeta("life_tick", clockMinutes(store));
+    return false;
+  }
+  return clockMinutes(store) - last >= s.lifeEveryHours * H;
 }
 
 /** Off-screen characters worth simulating: tied to open threads, recently in the story, or important world characters. */
