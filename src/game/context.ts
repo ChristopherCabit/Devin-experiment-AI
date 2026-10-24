@@ -30,6 +30,24 @@ export interface WorldSettings {
   length: number;
   /** Allow the narrator to step out of the story for comments; off by default. */
   asides: boolean;
+  /** Track open threads (debts, promises, threats) and show the relevant ones to the narrator. */
+  threads: boolean;
+  /** Most threads the narrator sees in one turn. */
+  threadsShown: number;
+  /** subtle: background only shows when the moment leads there; pressing: urgent threads may intrude. */
+  influence: "subtle" | "pressing";
+  /** Simulate tracked characters' lives while off-screen. */
+  npcLives: boolean;
+  /** In-game hours between off-screen periods (one cheap call each). */
+  lifeEveryHours: number;
+  /** Most off-screen characters simulated per period. */
+  lifeTracked: number;
+  /** Occasional wider-world events. */
+  worldEvents: boolean;
+  /** Average in-game days between world events. */
+  worldEventDays: number;
+  /** How far and fast news travels. */
+  connectedness: "isolated" | "regional" | "global";
 }
 
 export const Progression = z.object({
@@ -62,6 +80,15 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   thoughtsPerTurn: 2,
   length: 180,
   asides: false,
+  threads: true,
+  threadsShown: 2,
+  influence: "subtle",
+  npcLives: true,
+  lifeEveryHours: 4,
+  lifeTracked: 8,
+  worldEvents: true,
+  worldEventDays: 7,
+  connectedness: "regional",
 };
 
 /** Former default; saves still pointing at it follow the current default. */

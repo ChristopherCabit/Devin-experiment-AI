@@ -12,6 +12,8 @@ import { chapterContext, updateChapters } from "./memory.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
+import { agingOps, lifeDue, lifeText, newsText, selectThreads, simulatePeriod, threadText } from "./world.js";
+import { threads } from "../world/queries.js";
 import { Sheet } from "../world/types.js";
 
 export type PlayKind = "do" | "say" | "story" | "continue";
@@ -428,6 +430,9 @@ export function untrackedNames(store: WorldStore, prose: string, ops: unknown[])
   return [...out].slice(0, 8);
 }
 
+/** Off-screen periods run in the background after a turn and are applied at the start of the next one (dropped if that turn was undone). */
+const periods = new WeakMap<WorldStore, { turn: number; p: Promise<{ ops: OpInput[]; cost: number }> }>();
+
 const Review = z.object({
   characters: z
     .array(z.object({ name: z.string().min(1).max(80), description: z.string().max(400).catch(""), age: z.number().int().nullable().catch(null) }))
@@ -435,15 +440,38 @@ const Review = z.object({
     .catch([]),
   details: z.array(z.object({ id: z.string(), add: z.string().min(1).max(200) })).max(6).catch([]),
   facts: z.array(z.object({ text: z.string().min(1).max(300), subjects: z.array(z.string()).max(6).catch([]) })).max(4).catch([]),
+  threads: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(120),
+        text: z.string().max(600).catch(""),
+        participants: z.array(z.string()).max(6).catch([]),
+        urgency: z.enum(["low", "rising", "urgent"]).catch("low"),
+        deadline_hours: z.number().positive().nullable().catch(null),
+      }),
+    )
+    .max(2)
+    .catch([]),
+  thread_updates: z
+    .array(z.object({ id: z.string(), status: z.enum(["open", "resolved", "abandoned"]).catch("open"), note: z.string().max(300).nullable().catch(null) }))
+    .max(3)
+    .catch([]),
 });
+
+/** Words that suggest a thread may have started or moved even with nobody else present (a letter, a vow, a deadline). */
+const HOOK = /\b(?:owe|owed|debt|promis|swear|swore|vow|deadline|by (?:dawn|dusk|nightfall|morning|tomorrow)|threat|revenge|missing|letter|summon|warn|bounty|contract|job|quest|paid|repaid|settled)/i;
 
 const REVIEW_PROMPT = `You keep the game's records consistent with a story passage. Output JSON:
 {"characters":[{"name":str,"description":"one line from the passage","age":int|null}],
  "details":[{"id":ID,"add":str}],
- "facts":[{"text":str,"subjects":[ID]}]}
+ "facts":[{"text":str,"subjects":[ID]}],
+ "threads":[{"title":str,"text":str,"participants":[ID],"urgency":"low"|"rising"|"urgent","deadline_hours":num|null}],
+ "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}]}
 - characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
+- threads: a NEW unresolved situation the protagonist now knows of that should matter later: a debt, promise, threat, request, rivalry or mystery. Not small talk, not already in Open threads. Usually none. deadline_hours only if a time limit was stated or clearly implied.
+- thread_updates: Open threads this passage resolved, abandoned (the protagonist refused or gave up), or clearly moved forward (status "open" with a short note). Usually none.
 Empty arrays when nothing applies.`;
 
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
@@ -451,7 +479,8 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
   const { store, llm, playerId } = deps;
   const names = untrackedNames(store, prose, ops);
   const npcs = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
-  if (!prose.trim() || (!names.length && !npcs.length)) return 0;
+  if (!prose.trim() || (!names.length && !npcs.length && !(s.threads && HOOK.test(`${said} ${prose}`)))) return 0;
+  const openThreads = s.threads ? threads(store).filter((t) => t.status === "open").slice(-12) : [];
   const ids = new Set(npcs.map((c) => c.id));
   const known = store.facts().filter((f) => f.subjects.some((x) => ids.has(x) || x === playerId)).slice(-25);
   const profile = (c: Entity) => {
@@ -477,17 +506,26 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
           "Known facts:",
           ...(known.length ? known.map((f) => `- ${f.text}`) : ["(none)"]),
           "",
+          ...(s.threads ? ["Open threads:", ...(openThreads.length ? openThreads.map((t) => `- [${t.id}] ${t.title}: ${t.text}`) : ["(none)"]), ""] : []),
           ...(said ? [`Protagonist this turn: ${said}`, ""] : []),
           `Passage:\n${prose}`,
         ].join("\n"),
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
     /* treat as nothing to record */
+  }
+  if (s.threads) {
+    const real = (ids: string[]) => ids.map((x) => x.replace(/^\[|\]$/g, "")).filter((x) => store.getEntity(x));
+    for (const t of r.threads) ops.push({ op: "thread", title: t.title, text: t.text, participants: real(t.participants), urgency: t.urgency, deadline_hours: t.deadline_hours });
+    for (const u of r.thread_updates) {
+      if (!openThreads.some((t) => t.id === u.id)) continue;
+      ops.push({ op: "thread_update", id: u.id, ...(u.status !== "open" ? { status: u.status } : {}), ...(u.note ? { note: u.note } : {}) });
+    }
   }
   const me = store.getEntity(playerId);
   for (const c of r.characters.filter((c) => names.includes(c.name))) {
@@ -652,6 +690,15 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   const selfName = kind === "say" ? /\b(?:[Mm]y name(?:'s| is)|[Nn]ame's|[Cc]all me|I'm|I am)\s+([A-Z][a-z]{1,20})\b/.exec(input)?.[1] : undefined;
   if (selfName && !store.getEntity(playerId)?.aliases.includes(selfName)) engineOps.push({ op: "update_character", id: playerId, aliases: [selfName] });
 
+  const pend = periods.get(store);
+  periods.delete(store);
+  if (pend && pend.turn === log.lastTurn()) {
+    const r = await pend.p;
+    costUsd += r.cost;
+    engineOps.unshift(...r.ops);
+  }
+  if (settings.threads) engineOps.push(...agingOps(store));
+
   const turnNo = log.lastTurn() + 1;
   const hint = selectHint(store, playerId, pace, turnNo, rng);
   if (hint) engineOps.push(...hint.ops);
@@ -667,6 +714,9 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   }
   const { text: scene, present } = preview;
   const budgets = thoughtBudgets(present, settings, input);
+  const background = [threadText(store, selectThreads(store, playerId, pace, settings), settings), settings.npcLives ? lifeText(store, present) : "", newsText(store, playerId, settings)]
+    .filter(Boolean)
+    .join("\n\n");
   const spawnAt = spawnSubject(store, playerId, pace, turnNo, rng);
   const spawning = spawnAt ? generateSecret(llm, settings, scene, spawnAt, present).catch(() => ({ op: null, cost: 0 })) : null;
   const system = narratorSystem(settings, settings.intensity === "explicit" ? underageConcern(present) : null);
@@ -690,6 +740,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     budgets.length
       ? `\n## Thought budget (most new or changed "thought" ops per character this turn; use fewer or none when little new crosses their mind)\n${budgets.map((b) => `${b.name}: ${b.max}`).join(", ")}`
       : "",
+    background ? `\n${background}` : "",
     hint ? `\n## Hidden from the protagonist\n${hintText(store, hint.secret)}` : "",
   ].join("\n");
 
@@ -732,6 +783,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   });
   const rejected = results.filter((r) => !r.ok).map((r) => (r.ok ? "" : r.reason));
   costUsd += await updateChapters(store, log, llm, settings.parserModel).catch(() => 0);
+  if (lifeDue(store, settings)) periods.set(store, { turn, p: simulatePeriod(store, llm, settings, playerId, story.slice(-4000), rng).catch(() => ({ ops: [], cost: 0 })) });
   return { turn, text: prose, interpreted, rejected, costUsd };
 }
 

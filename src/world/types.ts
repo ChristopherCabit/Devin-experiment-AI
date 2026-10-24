@@ -151,3 +151,34 @@ export const Secret = z.object({
   created_turn: z.number().int().default(0),
 });
 export type Secret = z.infer<typeof Secret>;
+
+export const THREAD_STATUS = ["open", "resolved", "abandoned"] as const;
+export const THREAD_URGENCY = ["low", "rising", "urgent"] as const;
+/** An unresolved situation: a debt, promise, threat, request, rivalry or mystery. Deadline is in clock minutes. */
+export const Thread = z.object({
+  id: z.string(),
+  title: z.string().min(1).max(120),
+  text: z.string().max(1000).default(""),
+  participants: z.array(EntityId).default([]),
+  place: EntityId.nullable().default(null),
+  status: z.enum(THREAD_STATUS).catch("open"),
+  urgency: z.enum(THREAD_URGENCY).catch("low"),
+  deadline: z.number().int().nullable().default(null),
+  known: z.boolean().default(true),
+  notes: z.array(z.string()).default([]),
+  created_turn: z.number().int().default(0),
+  touched_turn: z.number().int().default(0),
+});
+export type Thread = z.infer<typeof Thread>;
+
+export const REACHES = ["local", "regional", "world"] as const;
+/** Something happening in the wider world. News of it spreads from its origin at a pace set by the world's connectedness. */
+export const WorldEvent = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(600),
+  reach: z.enum(REACHES).catch("local"),
+  origin: EntityId.nullable().default(null),
+  at: z.number().int().default(0),
+  created_turn: z.number().int().default(0),
+});
+export type WorldEvent = z.infer<typeof WorldEvent>;

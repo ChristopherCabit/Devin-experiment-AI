@@ -127,6 +127,7 @@ function loadEntities(selectId?: string) {
   if (keep) sel.value = keep;
   showEntity();
   renderSecrets();
+  renderJournal();
 }
 function showEntity() {
   const e = entities.find((x) => x.id === $<HTMLSelectElement>("entity-select").value);
@@ -152,7 +153,26 @@ function renderSecrets() {
   if (hidden) box.append(`${hidden} hidden secret${hidden === 1 ? "" : "s"}.`);
   if (!all.length) box.textContent = "None yet.";
 }
-$("show-spoilers").onchange = renderSecrets;
+function renderJournal() {
+  const spoil = $("show-spoilers").checked;
+  const box = $("journal-list");
+  box.replaceChildren();
+  const name = (id: string) => entities.find((e) => e.id === id)?.name ?? id;
+  const list = game.threads().filter((t) => spoil || t.known);
+  for (const t of [...list].sort((a, b) => Number(a.status !== "open") - Number(b.status !== "open") || b.touched_turn - a.touched_turn)) {
+    const p = document.createElement("p");
+    const mark = t.status === "open" ? (t.urgency === "urgent" ? "!" : "•") : t.status === "resolved" ? "✓" : "✗";
+    const who = t.participants.length ? ` (${t.participants.map(name).join(", ")})` : "";
+    p.textContent = `${mark} ${t.title}${who}: ${t.text}${t.notes.length ? ` — ${t.notes[t.notes.length - 1]}` : ""}`;
+    box.append(p);
+  }
+  if (spoil) for (const e of game.worldEvents()) box.append(Object.assign(document.createElement("p"), { textContent: `World [${e.reach}] ${e.text}` }));
+  if (!box.childNodes.length) box.textContent = "No open threads yet.";
+}
+$("show-spoilers").onchange = () => {
+  renderSecrets();
+  renderJournal();
+};
 $("btn-entity-save").onclick = async () => {
   try {
     const props = JSON.parse($<HTMLTextAreaElement>("entity-props").value);
@@ -179,13 +199,14 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens"] as const;
-const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length"]);
+const SETTINGS = ["title", "premise", "style", "intensity", "limits", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "contextTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness"] as const;
+const BOOLS = new Set<string>(["unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
+const NUMERIC = new Set<string>(["thoughtsPerTurn", "contextTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {
   const s = game.settings() as unknown as Record<string, unknown>;
   for (const k of SETTINGS) {
-    if (k === "unboundedPower" || k === "asides") $(`s-${k}`).checked = Boolean(s[k]);
+    if (BOOLS.has(k)) $(`s-${k}`).checked = Boolean(s[k]);
     else $(`s-${k}`).value = String(s[k]);
   }
   progressionTo("s-prog", game.settings().progression);
@@ -197,7 +218,7 @@ function loadSettings() {
 }
 $("btn-settings-save").onclick = async () => {
   const body: Record<string, unknown> = {};
-  for (const k of SETTINGS) body[k] = k === "unboundedPower" || k === "asides" ? $(`s-${k}`).checked : NUMERIC.has(k) ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
+  for (const k of SETTINGS) body[k] = BOOLS.has(k) ? $(`s-${k}`).checked : NUMERIC.has(k) ? Number($(`s-${k}`).value) : $(`s-${k}`).value;
   body.progression = progressionFrom("s-prog");
   if (body.unboundedPower && !game.settings().unboundedPower && !confirm("Turn on unbounded power? Your character's stats will no longer be capped.")) return;
   try {

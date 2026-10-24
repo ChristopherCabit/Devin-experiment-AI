@@ -52,6 +52,8 @@
     </div>
     <input id="new-parent" placeholder="Parent id (e.g. room:common)">
     <div class="row"><button id="btn-entity-add">Create</button></div>
+    <h3>Journal</h3>
+    <div id="journal-list" class="msg"></div>
     <h3>Secrets</h3>
     <label class="check"><input type="checkbox" id="show-spoilers"> Show spoilers</label>
     <div id="secrets-list" class="msg"></div>
@@ -142,6 +144,29 @@
       <input id="s-length" type="number" min="30" max="800" step="10">
     </label>
     <label><input id="s-asides" type="checkbox"> Allow narrator asides (out-of-character comments)</label>
+    <details>
+      <summary>Living world (threads, off-screen lives, world events)</summary>
+      <label><input id="s-threads" type="checkbox"> Track open threads (debts, promises, threats)</label>
+      <label>Most threads shown to the narrator per turn <input id="s-threadsShown" type="number" min="0" max="5"></label>
+      <label>Background influence
+        <select id="s-influence">
+          <option value="subtle">Subtle: only when the moment leads there</option>
+          <option value="pressing">Pressing: urgent threads may intrude</option>
+        </select>
+      </label>
+      <label><input id="s-npcLives" type="checkbox"> Off-screen lives for important characters</label>
+      <label>In-game hours between off-screen periods (one cheap call each) <input id="s-lifeEveryHours" type="number" min="1" max="168"></label>
+      <label>Most off-screen characters simulated <input id="s-lifeTracked" type="number" min="0" max="20"></label>
+      <label><input id="s-worldEvents" type="checkbox"> World events</label>
+      <label>Average in-game days between world events <input id="s-worldEventDays" type="number" min="0.5" max="365" step="0.5"></label>
+      <label>Connectedness (how far news travels)
+        <select id="s-connectedness">
+          <option value="isolated">Isolated</option>
+          <option value="regional">Regional</option>
+          <option value="global">Globalised</option>
+        </select>
+      </label>
+    </details>
     <label>World power (1-10) <input id="s-powerCeiling" type="number" min="1" max="10"></label>
     <label>NPC inner thoughts (0 off, 2 normal, 5 a lot; each character scaled by their mind, personality and "thoughtfulness") <input id="s-thoughtsPerTurn" type="number" min="0" max="5"></label>
     <label class="check"><input type="checkbox" id="s-unboundedPower"> Unbounded power (godlike play)</label>

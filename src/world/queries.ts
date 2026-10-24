@@ -1,6 +1,6 @@
 import type { WorldStore } from "./store.js";
 import {
-  Secret,
+  Secret, Thread, WorldEvent,
   CharacterProps,
   ItemProps,
   LOCATION_KINDS,
@@ -113,4 +113,6 @@ export function canSee(store: WorldStore, viewerId: string, targetId: string): b
   return !blockedByClosed(store, targetId, lv.id);
 }
 
+export const threads = (store: WorldStore): Thread[] => Thread.array().catch([]).parse(store.getMeta<unknown>("threads", []));
+export const worldEvents = (store: WorldStore): WorldEvent[] => WorldEvent.array().catch([]).parse(store.getMeta<unknown>("world_events", []));
 export const secrets = (store: WorldStore): Secret[] => Secret.array().catch([]).parse(store.getMeta<unknown>("secrets", []));

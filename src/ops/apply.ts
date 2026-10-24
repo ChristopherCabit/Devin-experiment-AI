@@ -21,8 +21,8 @@ import {
   slugify,
 } from "../world/queries.js";
 import { memberSheet, seeded } from "../world/variance.js";
-import { Secret, Sheet } from "../world/types.js";
-import { secrets } from "../world/queries.js";
+import { Secret, Sheet, Thread, WorldEvent } from "../world/types.js";
+import { secrets, threads, worldEvents } from "../world/queries.js";
 import { AUTHOR_ONLY_OPS, ENGINE_ONLY_OPS, Op, type OpSource } from "./schema.js";
 
 export interface Limits {
@@ -310,6 +310,53 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       } else if (op.op === "hint") sec.hinted_turn = ctx.turn;
       else sec.urgency = op.to;
       store.setMeta("secrets", list);
+      return {};
+    }
+
+    case "thread": {
+      for (const id of op.participants) need(store, id);
+      if (op.place) need(store, op.place);
+      const list = threads(store);
+      if (list.some((t) => t.status === "open" && t.title.toLowerCase() === op.title.toLowerCase())) fail(`thread "${op.title}" already open`);
+      const id = `thread:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      const deadline = op.deadline_hours ? clockMinutes(store) + Math.round(op.deadline_hours * 60) : null;
+      const rest = { title: op.title, text: op.text, participants: op.participants, place: op.place, urgency: op.urgency, known: op.known };
+      list.push(Thread.parse({ ...rest, id, deadline, created_turn: ctx.turn, touched_turn: ctx.turn }));
+      store.setMeta("threads", list);
+      return { id };
+    }
+
+    case "thread_update": {
+      const list = threads(store);
+      const t = list.find((x) => x.id === op.id);
+      if (!t) fail(`unknown thread ${op.id}`);
+      if (op.status) t.status = op.status;
+      if (op.urgency) t.urgency = op.urgency;
+      if (op.known !== undefined) t.known = op.known;
+      if (op.note) t.notes = [...t.notes, op.note].slice(-6);
+      t.touched_turn = ctx.turn;
+      store.setMeta("threads", list);
+      return {};
+    }
+
+    case "world_event": {
+      if (op.origin) need(store, op.origin);
+      const list = worldEvents(store);
+      const id = `event:${1 + Math.max(0, ...list.map((x) => Number(x.id.split(":")[1]) || 0))}`;
+      list.push(WorldEvent.parse({ id, text: op.text, reach: op.reach, origin: op.origin, at: clockMinutes(store), created_turn: ctx.turn }));
+      store.setMeta("world_events", list.slice(-30));
+      return { id };
+    }
+
+    case "life_event": {
+      const e = need(store, op.npc, ["character"]);
+      const life = Array.isArray(e.props.life) ? (e.props.life as unknown[]) : [];
+      store.putEntity({ ...e, props: { ...e.props, life: [...life, { text: op.text, at: clockMinutes(store) }].slice(-4) } });
+      return {};
+    }
+
+    case "life_tick": {
+      store.setMeta("life_tick", clockMinutes(store));
       return {};
     }
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EntityId, EntityKind, Hand, Relation, SECRET_KINDS, Tier, URGENCIES } from "../world/types.js";
+import { EntityId, EntityKind, Hand, REACHES, Relation, SECRET_KINDS, THREAD_STATUS, THREAD_URGENCY, Tier, URGENCIES } from "../world/types.js";
 
 const Name = z.string().trim().min(1).max(80);
 const Zone = z.string().trim().toLowerCase().min(1).max(40);
@@ -77,6 +77,31 @@ export const Op = z.discriminatedUnion("op", [
   z.object({ op: z.literal("reveal"), id: z.string().min(1) }).strict(),
   z.object({ op: z.literal("hint"), id: z.string().min(1) }).strict(),
   z.object({ op: z.literal("secret_urgency"), id: z.string().min(1), to: z.enum(URGENCIES) }).strict(),
+  z
+    .object({
+      op: z.literal("thread"),
+      title: z.string().trim().min(1).max(120),
+      text: z.string().max(1000).default(""),
+      participants: z.array(EntityId).default([]),
+      place: EntityId.nullable().default(null),
+      urgency: z.enum(THREAD_URGENCY).default("low"),
+      deadline_hours: z.number().positive().max(100000).nullable().default(null),
+      known: z.boolean().default(true),
+    })
+    .strict(),
+  z
+    .object({
+      op: z.literal("thread_update"),
+      id: z.string().min(1),
+      status: z.enum(THREAD_STATUS).optional(),
+      urgency: z.enum(THREAD_URGENCY).optional(),
+      note: z.string().trim().min(1).max(300).optional(),
+      known: z.boolean().optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal("world_event"), text: z.string().trim().min(1).max(600), reach: z.enum(REACHES).default("local"), origin: EntityId.nullable().default(null) }).strict(),
+  z.object({ op: z.literal("life_event"), npc: EntityId, text: Text }).strict(),
+  z.object({ op: z.literal("life_tick") }).strict(),
   z.object({ op: z.literal("set_zone"), id: EntityId, zone: Zone }).strict(),
   z.object({ op: z.literal("set_posture"), id: EntityId, posture: Name }).strict(),
   z.object({ op: z.literal("hold"), character: EntityId, item: EntityId, hand: Hand.optional() }).strict(),
@@ -129,7 +154,7 @@ export type OpName = Op["op"];
 export const AUTHOR_ONLY_OPS: ReadonlySet<OpName> = new Set(["author_update"]);
 
 /** Ops the narrator may never emit: they come only from code-resolved outcomes. */
-export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression", "practice", "remove_entity", "secret", "hint", "secret_urgency"]);
+export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression", "practice", "remove_entity", "secret", "hint", "secret_urgency", "world_event", "life_event", "life_tick"]);
 
 export const OpSource = z.enum(["narrator", "engine", "author"]);
 export type OpSource = z.infer<typeof OpSource>;

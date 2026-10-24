@@ -7,7 +7,7 @@ import { AdventureSpec, blankDraft, buildSeed, generateDraft, proposeStats, Setu
 import { LlmClient, type ChatRequest, type ChatResult, type FetchLike } from "../llm/client.js";
 import { SpendCapError, SpendMeter } from "../llm/spend.js";
 import type { Files } from "../platform/files.js";
-import { charProps, clockMinutes, secrets } from "../world/queries.js";
+import { charProps, clockMinutes, secrets, threads, worldEvents } from "../world/queries.js";
 import type { Entity } from "../world/types.js";
 import type { WorldStore } from "../world/store.js";
 import { SaveManager, type SaveInfo } from "./saves.js";
@@ -50,6 +50,15 @@ const SettingsBody = z
     thoughtsPerTurn: z.number().int().min(0).max(5),
     length: z.number().int().min(30).max(800),
     asides: z.boolean(),
+    threads: z.boolean(),
+    threadsShown: z.number().int().min(0).max(5),
+    influence: z.enum(["subtle", "pressing"]),
+    npcLives: z.boolean(),
+    lifeEveryHours: z.number().min(1).max(168),
+    lifeTracked: z.number().int().min(0).max(20),
+    worldEvents: z.boolean(),
+    worldEventDays: z.number().min(0.5).max(365),
+    connectedness: z.enum(["isolated", "regional", "global"]),
     unboundedPower: z.boolean(),
     progression: Progression,
   })
@@ -288,6 +297,12 @@ export class Game {
   }
 
   /** Every secret, for the Edit tab's spoiler view. */
+  threads() {
+    return threads(this.W.store);
+  }
+  worldEvents() {
+    return worldEvents(this.W.store);
+  }
   secrets() {
     return secrets(this.W.store);
   }
