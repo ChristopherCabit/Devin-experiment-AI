@@ -319,6 +319,8 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       const e = need(store, op.id);
       if (ctx.source === "narrator" && (e.props as { is_player?: unknown }).is_player) fail("the narrator cannot rename the player character");
       if (e.name.toLowerCase() === op.name.toLowerCase()) fail(`${op.id} is already named ${op.name}`);
+      const taken = ctx.source === "narrator" && store.entitiesOfKind(e.kind).find((x) => x.id !== e.id && x.name.toLowerCase() === op.name.toLowerCase());
+      if (taken) fail(`${op.name} is already ${taken.id}; a duplicate is merged by the player, not renamed`);
       const aliases = [...new Set([...e.aliases, e.name])].filter((a) => a.toLowerCase() !== op.name.toLowerCase());
       store.putEntity({ ...e, name: op.name, aliases });
       return {};

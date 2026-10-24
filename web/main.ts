@@ -141,6 +141,7 @@ function loadEntities(selectId?: string) {
   sel.replaceChildren(...entities.filter((e) => e.kind !== "region").map((e) => new Option(`${e.name}${e.kind === "character" ? ` — ${entities.find((x) => x.id === e.parent_id)?.name ?? "nowhere"}` : ""} (${e.id})`, e.id)));
   if (keep) sel.value = keep;
   showEntity();
+  renderDupes();
   renderSecrets();
   renderJournal();
 }
@@ -159,21 +160,64 @@ $("btn-merge").onclick = async () => {
   const from = $<HTMLSelectElement>("entity-select").value;
   const into = $<HTMLSelectElement>("merge-into").value;
   const b = $("btn-merge");
-  if (!from || !into) return void ($("cast-msg").textContent = "Pick who to merge into.");
+  if (!from || !into) return void ($("merge-msg").textContent = "Pick who to merge into.");
   if (b.dataset.armed !== "1") {
     b.dataset.armed = "1";
     b.textContent = `Tap again to merge into ${entities.find((x) => x.id === into)?.name ?? into}`;
     return;
   }
   try {
-    await game.mergeEntities(from, into);
-    $("cast-msg").textContent = "Merged.";
-    loadEntities(into);
-    render(game.state());
+    await merge(from, into);
   } catch (e) {
-    $("cast-msg").textContent = errText(e);
+    $("merge-msg").textContent = `Merge failed: ${errText(e)}`;
   }
 };
+async function merge(from: string, into: string) {
+  const name = entities.find((x) => x.id === from)?.name ?? from;
+  await game.mergeEntities(from, into);
+  loadEntities(into);
+  render(game.state());
+  $("merge-msg").textContent = `Merged ${name} (${from}) into ${entities.find((x) => x.id === into)?.name ?? into}.`;
+}
+/** Characters sharing a name or alias, each offered as a two-tap merge into the oldest of them. */
+function renderDupes() {
+  const box = $("dupes");
+  box.replaceChildren();
+  const chars = entities.filter((e) => e.kind === "character");
+  const names = (e: Entity) => [e.name, ...e.aliases].map((n) => n.toLowerCase().trim());
+  const done = new Set<string>();
+  for (const e of chars) {
+    if (done.has(e.id)) continue;
+    const group = chars.filter((x) => names(x).some((n) => names(e).includes(n)));
+    if (group.length < 2) continue;
+    group.forEach((x) => done.add(x.id));
+    const keep = group.find((x) => (x.props as { is_player?: unknown }).is_player) ?? [...group].sort((a, b) => a.created_turn - b.created_turn)[0];
+    if (!keep) continue;
+    for (const d of group.filter((x) => x.id !== keep.id && !(x.props as { is_player?: unknown }).is_player)) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("span");
+      label.textContent = `${d.name} (${d.id}) → ${keep.name} (${keep.id})`;
+      const btn = document.createElement("button");
+      btn.textContent = "Merge";
+      btn.onclick = async () => {
+        if (btn.dataset.armed !== "1") {
+          btn.dataset.armed = "1";
+          btn.textContent = "Tap again";
+          return;
+        }
+        try {
+          await merge(d.id, keep.id);
+        } catch (err) {
+          $("merge-msg").textContent = `Merge failed: ${errText(err)}`;
+        }
+      };
+      row.append(label, btn);
+      box.append(row);
+    }
+  }
+  if (!box.childNodes.length) box.textContent = "None found.";
+}
 $("entity-select").onchange = showEntity;
 function renderSecrets() {
   const all = game.secrets();

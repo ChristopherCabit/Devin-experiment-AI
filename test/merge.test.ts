@@ -55,6 +55,15 @@ describe("one character, many names", () => {
   });
 });
 
+describe("renames", () => {
+  it("the narrator cannot rename someone to another character's name", () => {
+    const { store } = world(() => "");
+    const r = applyOps(store, [{ op: "rename", id: "character:rook", name: "Mara" }], { source: "narrator", turn: 1 });
+    expect(r[0]?.ok).toBe(false);
+    expect(store.getEntity("character:rook")?.name).toBe("Rook");
+  });
+});
+
 describe("corrections", () => {
   it("reach the narrator and the record-keeper with top priority", async () => {
     const { store, seen, deps } = world((req) => (isReview(req) ? "{}" : "<ops></ops>Mara nods."));
