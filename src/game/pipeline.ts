@@ -220,44 +220,58 @@ export function limitThoughts<T>(ops: T[], budgets: Budget[]): T[] {
 
 /** What the player may see of a partial narrator draft: no ops blocks (closed or still open), no raw JSON, no line written for the player. */
 export function visibleProse(raw: string): string {
-  let s = raw.replace(/<ops>[\s\S]*?<\/ops>/gi, "").replace(/<ops>[\s\S]*$/i, "").replace(/<[a-z/]*$/i, "");
-  if (/^\s*(?:```|\{)/.test(s)) {
-    s = splitNarration(s).prose;
-    if (/^\s*(?:```|\{)/.test(s)) return "";
-  }
-  return s.split(/\n\s*>/)[0]?.trim() ?? "";
+  // Mid-stream: hide an open tag or code fence and everything after it until it closes.
+  const s = raw
+    .replace(/<(ops?|state|updates)>[\s\S]*?<\/\1>/gi, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/<ops>\s*(?:[[{\]].*\s*\n)*(?=\s*[^\s[{\]<])/gi, "")
+    .replace(/<(?:ops?|state|updates)>[\s\S]*$/i, "")
+    .replace(/```[\s\S]*$/, "")
+    .replace(/<[a-z/]*$/i, "")
+    .replace(/(?:^|\n)\s*[[{][^\n]*$/, "");
+  return splitNarration(s).prose.split(/\n\s*>/)[0]?.trim() ?? "";
 }
 
 export function splitNarration(raw: string): { ops: unknown[]; prose: string; badLines: number } {
   const ops: unknown[] = [];
   let badLines = 0;
   const lines: string[] = [];
-  let rest = raw.replace(/<ops>([\s\S]*?)<\/ops>/gi, (_, body: string) => {
+  const take = (body: string) => {
     lines.push(...body.split("\n"));
-    return "";
-  });
-  // Some models emit {"ops":[...]} or a fenced JSON block instead of the tags.
-  rest = rest.replace(/^\s*(?:```(?:json)?\s*)?(\{\s*"ops"\s*:[\s\S]*?\]\s*\})\s*(?:```)?/, (whole, json: string) => {
+    return "\n";
+  };
+  let rest = raw
+    .replace(/<ops\s*\/>/gi, "")
+    .replace(/<(ops?|state|updates)>([\s\S]*?)<\/\1>/gi, (_, _t: string, body: string) => take(body))
+    // Fenced JSON anywhere (some models wrap ops, or {"ops":[...]}, in a code block).
+    .replace(/```(?:json)?\s*([\s\S]*?)```/gi, (_, body: string) => take(body))
+    // An <ops> block the model never closed: its JSON lines run until the first line of prose.
+    .replace(/<ops>\s*((?:(?:[[{\]].*)?\s*\n)*(?:[[{\]].*)?)/gi, (_, body: string) => take(body))
+    .replace(/<\/?(?:ops?|state|updates)>/gi, "");
+  // Stray JSON lines in the prose are ops the model forgot to wrap; never show them.
+  rest = rest
+    .split("\n")
+    .filter((l) => {
+      const t = l.trim();
+      if (!/^[[{]/.test(t) || !/[}\]],?$/.test(t)) return true;
+      lines.push(t);
+      return false;
+    })
+    .join("\n");
+  for (const line of lines.map((l) => l.trim().replace(/,$/, "")).filter((l) => l && l !== "[" && l !== "]" && l !== "[]")) {
     try {
-      const v = JSON.parse(json) as { ops?: unknown };
-      if (Array.isArray(v.ops)) ops.push(...(v.ops as unknown[]));
-      return "";
-    } catch {
-      return whole;
-    }
-  });
-  for (const line of lines.map((l) => l.trim().replace(/,$/, "")).filter((l) => l && l !== "[]")) {
-    try {
-      ops.push(JSON.parse(line));
+      const v = JSON.parse(line) as unknown;
+      const list = Array.isArray(v) ? v : (v as { ops?: unknown }).ops && Array.isArray((v as { ops?: unknown }).ops) ? ((v as { ops: unknown[] }).ops) : [v];
+      for (const o of list) if (o && typeof o === "object" && "op" in o) ops.push(o);
+      else badLines++;
     } catch {
       badLines++;
     }
   }
-  rest = rest.replace(/<\/?ops>/gi, "");
   // The narrator must stop at the player's turn; drop anything written as the player's next input.
   const cut = rest.search(/^>\s/m);
   if (cut >= 0) rest = rest.slice(0, cut);
-  return { ops, prose: rest.trim(), badLines };
+  return { ops, prose: rest.replace(/\n{3,}/g, "\n\n").trim(), badLines };
 }
 
 const titleCase = (s: string): string =>

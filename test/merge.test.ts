@@ -116,3 +116,27 @@ describe("corrections", () => {
     expect(systems.some((s) => /keep the game's records[\s\S]*Player corrections[^\n]*Margaret/.test(s))).toBe(true);
   });
 });
+
+describe("ops never leak into the story", () => {
+  it("catches unclosed blocks, fences, stray lines and arrays", async () => {
+    const { splitNarration, visibleProse } = await import("../src/game/pipeline.js");
+    const op = '{"op":"update_character","id":"character:mara","appearance":"freckles"}';
+    const cases = [
+      `<ops>\n${op}\n\nMara nods.`,
+      `Mara nods.\n<ops>\n${op}\n</ops>`,
+      `Mara nods.\n\`\`\`json\n${op}\n\`\`\``,
+      `Mara nods.\n${op}`,
+      `<ops>[${op}]</ops>\nMara nods.`,
+      `<op>${op}</op>Mara nods.`,
+      `\`\`\`json\n{"ops":[${op}]}\n\`\`\`\nMara nods.`,
+    ];
+    for (const c of cases) {
+      const r = splitNarration(c);
+      expect(r.prose, c).toBe("Mara nods.");
+      expect(r.ops, c).toHaveLength(1);
+      expect(visibleProse(c), c).toBe("Mara nods.");
+    }
+    expect(visibleProse(`Mara nods.\n{"op":"upda`)).toBe("Mara nods.");
+    expect(splitNarration("She says [quietly] that {it} was fine.").prose).toBe("She says [quietly] that {it} was fine.");
+  });
+});
