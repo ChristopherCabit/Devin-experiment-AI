@@ -44,3 +44,5 @@ label.check input { width: auto; }
 .npc { display: flex; gap: 0.5em; align-items: flex-start; margin: 0.3em 0; }
 .npc input { width: auto; margin-top: 0.3em; }
 .msg.bad { color: #e07070; }
+.track { padding: 8px 0; border-bottom: 1px solid #333842; }
+.track .row > * { flex: 0 1 auto; }

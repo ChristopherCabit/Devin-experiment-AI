@@ -91,7 +91,94 @@ export interface MusicSource {
   style: string;
   model?: string;
   tag(passage: string): Promise<Cue | null>;
-  generate(prompt: string): Promise<{ audio: Uint8Array; text: string }>;
+  generate(prompt: string): Promise<{ audio: Uint8Array; text: string; costUsd?: number }>;
+}
+
+const TITLE_WORDS: Record<Cue["mood"], string> = {
+  calm: "Still Water",
+  warm: "Hearthlight",
+  tender: "Quiet Hands",
+  melancholy: "Grey Rain",
+  somber: "Long Shadows",
+  tense: "Held Breath",
+  ominous: "Gathering Dark",
+  eerie: "Hollow Halls",
+  mysterious: "Hidden Paths",
+  playful: "Bright Steps",
+  romantic: "Candle Glow",
+  triumphant: "High Banners",
+  energetic: "Open Road",
+  frantic: "Breakneck",
+};
+const FORMS: Record<Cue["energy"], string> = { low: "Nocturne", medium: "Air", high: "Gallop" };
+export const trackTitle = (cue: Cue) => `${TITLE_WORDS[cue.mood]} ${FORMS[cue.energy]}`;
+
+export const TrackInfo = z.object({
+  key: z.string(),
+  title: z.string(),
+  mood: z.enum(MOODS).nullable(),
+  energy: z.enum(ENERGIES).nullable(),
+  style: z.string().nullable(),
+  model: z.string().nullable(),
+  /** Exactly what was sent to the music model. */
+  prompt: z.string().nullable(),
+  costUsd: z.number().nullable(),
+  bytes: z.number().nullable(),
+  created: z.number().nullable(),
+});
+export type TrackInfo = z.infer<typeof TrackInfo>;
+
+const INDEX = "music/index.json";
+const KEY_RE = new RegExp(`-(${MOODS.join("|")})-(${ENERGIES.join("|")})$`);
+
+/** The tracks saved on this device, with what is known about each. Shared by every save. */
+export class MusicBank {
+  constructor(private readonly files: Files) {}
+
+  private async index(): Promise<Record<string, TrackInfo>> {
+    const raw = await this.files.read(INDEX);
+    if (!raw) return {};
+    try {
+      return z.record(z.string(), TrackInfo).catch({}).parse(JSON.parse(new TextDecoder().decode(raw)));
+    } catch {
+      return {};
+    }
+  }
+
+  private async save(idx: Record<string, TrackInfo>) {
+    await this.files.mkdir("music");
+    await this.files.write(INDEX, new TextEncoder().encode(JSON.stringify(idx)));
+  }
+
+  async record(info: TrackInfo) {
+    const idx = await this.index();
+    idx[info.key] = info;
+    await this.save(idx);
+  }
+
+  async list(): Promise<TrackInfo[]> {
+    const idx = await this.index();
+    const keys = (await this.files.list("music")).filter((n) => n.endsWith(".mp3")).map((n) => n.slice(0, -4));
+    return keys.map((k) => idx[k] ?? untracked(k)).sort((a, b) => (b.created ?? 0) - (a.created ?? 0) || a.title.localeCompare(b.title));
+  }
+
+  audio(key: string): Promise<Uint8Array | null> {
+    return /^[\w-]+$/.test(key) ? this.files.read(`music/${key}.mp3`) : Promise.resolve(null);
+  }
+
+  async remove(key: string) {
+    if (!/^[\w-]+$/.test(key)) throw new Error("bad track key");
+    await this.files.remove(`music/${key}.mp3`);
+    const idx = await this.index();
+    if (key in idx) await this.save(Object.fromEntries(Object.entries(idx).filter(([k]) => k !== key)));
+  }
+}
+
+/** A track saved before the bank kept details: mood and energy are still in its key. */
+function untracked(key: string): TrackInfo {
+  const m = KEY_RE.exec(key);
+  const cue = m ? Cue.parse({ mood: m[1], energy: m[2] }) : null;
+  return { key, title: cue ? trackTitle(cue) : key, mood: cue?.mood ?? null, energy: cue?.energy ?? null, style: null, model: null, prompt: null, costUsd: null, bytes: null, created: null };
 }
 
 /** Decides when the music changes, and keeps generated tracks on the device so each style/mood/energy is paid for once. */
@@ -101,7 +188,17 @@ export class MusicDirector {
   private readonly busy = new Set<string>();
   private readonly failed = new Set<string>();
 
-  constructor(private readonly files: Files) {}
+  private readonly bank: MusicBank;
+
+  constructor(private readonly files: Files) {
+    this.bank = new MusicBank(files);
+  }
+
+  /** Stop treating a deleted track as playing, so the mood can make a new one. */
+  forget(key: string) {
+    if (this.current === key) this.current = null;
+    if (this.pending === key) this.pending = null;
+  }
 
   /** A new track to play, or null to keep the current one. Without `force`, a calmer change must hold for two passages. */
   async next(passage: string, src: MusicSource, force = false): Promise<Track | null> {
@@ -123,7 +220,8 @@ export class MusicDirector {
       if (this.busy.has(key) || this.failed.has(key)) return null;
       this.busy.add(key);
       try {
-        const r = await src.generate(musicPrompt(cue, src.style));
+        const prompt = musicPrompt(cue, src.style);
+        const r = await src.generate(prompt);
         if (/[a-z]{3,}/i.test(r.text.replace(/<\/?instrumental>/gi, ""))) {
           this.failed.add(key);
           return null;
@@ -131,6 +229,8 @@ export class MusicDirector {
         audio = r.audio;
         await this.files.mkdir("music");
         await this.files.write(path, audio);
+        const info = { key, title: trackTitle(cue), mood: cue.mood, energy: cue.energy, style: cleanStyle(src.style) || null, model: src.model ?? null, prompt, costUsd: r.costUsd ?? null, bytes: audio.length, created: Date.now() };
+        await this.bank.record(info).catch(() => undefined);
       } finally {
         this.busy.delete(key);
       }

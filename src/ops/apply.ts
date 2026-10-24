@@ -356,6 +356,17 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       return {};
     }
 
+    case "appointment_update": {
+      const list = appointments(store);
+      const i = list.findIndex((a) => a.text.toLowerCase() === op.text.toLowerCase());
+      const a = list[i];
+      if (!a) return {};
+      if (op.status === "moved" && op.at !== null) list[i] = { ...a, was: a.was ?? a.at, at: op.at };
+      else list.splice(i, 1);
+      store.setMeta("appointments", list.sort((x, y) => x.at - y.at));
+      return {};
+    }
+
     case "world_event": {
       if (op.origin) need(store, op.origin);
       const list = worldEvents(store);

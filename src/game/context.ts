@@ -158,7 +158,7 @@ export function scheduleLines(store: WorldStore): string[] {
   return appointments(store)
     .filter((a) => a.at >= now - 120 && a.at <= now + 2880)
     .slice(0, 4)
-    .map((a) => `Scheduled: ${a.text} at ${clockAt(a.at)} (${until(a.at - now)})`);
+    .map((a) => `Scheduled: ${a.text} at ${clockAt(a.at)} (${until(a.at - now)}${a.was !== null ? `; moved from ${clockAt(a.was)}` : ""})`);
 }
 
 const SPEC_SKIP = new Set(["is_player", "scene", "mind", "sheet", "age"]);

@@ -1,4 +1,4 @@
-import { MusicDirector, tagScene, type Track } from "../game/music.js";
+import { MusicBank, MusicDirector, tagScene, type Track, type TrackInfo } from "../game/music.js";
 import { generateMusic } from "../llm/music.js";
 import { z } from "zod";
 import { TurnLog } from "../engine/turns.js";
@@ -218,6 +218,20 @@ export class Game {
       },
       force,
     );
+  }
+
+  /** Tracks saved on this device (shared by all saves). */
+  musicBank(): Promise<TrackInfo[]> {
+    return new MusicBank(this.opts.files).list();
+  }
+
+  musicAudio(key: string): Promise<Uint8Array | null> {
+    return new MusicBank(this.opts.files).audio(key);
+  }
+
+  async deleteTrack(key: string): Promise<void> {
+    await new MusicBank(this.opts.files).remove(key);
+    this.director?.forget(key);
   }
 
   private undoAllowed() {

@@ -125,6 +125,7 @@ function showTab(tab: string) {
   if (tab === "cast") loadEntities();
   if (tab === "world") {
     loadSettings();
+    void renderBank();
     $<HTMLInputElement>("s-length-range").value = $<HTMLInputElement>("s-length").value;
   }
   if (tab === "new") updatePoints();
@@ -481,6 +482,51 @@ $("btn-save-import").onclick = async () => {
     say(errText(e));
   }
 };
+
+async function renderBank() {
+  const box = $("music-bank");
+  const list = await game.musicBank().catch(() => []);
+  box.replaceChildren();
+  if (!list.length) {
+    box.textContent = "No tracks yet.";
+    return;
+  }
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> = {}) => Object.assign(document.createElement(tag), props);
+  for (const t of list) {
+    const info = [t.mood && t.energy ? `${t.mood}, ${t.energy} energy` : null, t.style ?? (t.prompt ? "cinematic underscore" : null), t.model?.replace(/^.*\//, ""), t.bytes ? `${(t.bytes / 1e6).toFixed(1)} MB` : null, t.costUsd !== null ? `$${t.costUsd.toFixed(2)}` : null, t.created ? new Date(t.created).toLocaleDateString() : null].filter(Boolean).join(" · ");
+    const row = el("div", { className: "track" });
+    row.append(el("strong", { textContent: t.title }), el("div", { className: "hint", textContent: info || "Made before the bank kept details." }));
+    if (t.prompt) {
+      const d = el("details");
+      d.append(el("summary", { textContent: "Prompt sent" }), el("p", { className: "hint", textContent: t.prompt }));
+      row.append(d);
+    }
+    const play = el("button", { textContent: "Play" });
+    play.onclick = async () => {
+      const a = await game.musicAudio(t.key);
+      if (a) await music.play(t.key, a);
+    };
+    const exp = el("button", { textContent: "Export" });
+    exp.onclick = async () => {
+      const a = await game.musicAudio(t.key);
+      if (a && (await platform.exportFile(`${safeName(t.title)}${t.style ? ` - ${safeName(t.style)}` : ""}.mp3`, a))) exp.textContent = "Exported";
+    };
+    const del = el("button", { textContent: "Delete", className: "danger" });
+    del.onclick = async () => {
+      if (del.dataset.armed !== "1") {
+        del.dataset.armed = "1";
+        del.textContent = "Tap again to delete";
+        return;
+      }
+      await game.deleteTrack(t.key).catch((e) => say(errText(e)));
+      void renderBank();
+    };
+    const buttons = el("div", { className: "row" });
+    buttons.append(play, exp, del);
+    row.append(buttons);
+    box.append(row);
+  }
+}
 
 // ---------- boot ----------
 try {

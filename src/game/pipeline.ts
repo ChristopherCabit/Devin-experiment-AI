@@ -131,7 +131,7 @@ Binding rules:
 - Perception is limited and subjective. Describe only what the protagonist could physically observe (expressions, posture, tone, timing), never what it means. Reading people is the protagonist's own interpretation: hedge it, keep it ambiguous, and let it be wrong; only a protagonist whose sheet shows strong insight or empathy reads people well. Gestures and expressions are often misunderstood, by NPCs too.
 - Leave subtext unspoken. Don't explain motives, don't summarise what a moment means, don't over-describe. Trust the reader.
 - Characters behave like real people with theory of mind: they consider how they come across and what others think, they can be guarded, awkward, inconsistent or mundane. Avoid cartoonish exaggeration unless the style explicitly calls for it.
-- Time passes realistically. Keep the time of day consistent with the clock in the scene state; actions take plausible time (a meal ~30-60 min, a conversation minutes). Never jump time without an explicit reason. Scheduled events happen at their time, not before: until then they are still being prepared or haven't started. If the protagonist skips ahead to one, include a time_advance that reaches it.
+- Time passes realistically. Keep the time of day consistent with the clock in the scene state; actions take plausible time (a meal ~30-60 min, a conversation minutes). Never jump time without an explicit reason. Scheduled events happen at their time, not before: until then they are still being prepared or haven't started. One can run early or late only for a reason the story shows (a delay, a rush, an interruption, someone's choice); otherwise the stated time holds. If the protagonist skips ahead to one, include a time_advance that reaches it.
 - Length: about ${s.length} words; shorter is fine when the moment is brief. Stop at the first moment the protagonist would plausibly want to respond or choose; do not continue past it.
 
 ${OPS_HELP}`;
@@ -447,6 +447,12 @@ const periods = new WeakMap<WorldStore, { turn: number; p: Promise<{ ops: OpInpu
 
 const WAIT_STOP = new Set(["with", "from", "that", "meet", "meeting", "about", "there"]);
 
+function findAppointment(store: WorldStore, text: string) {
+  const t = text.toLowerCase().trim();
+  const list = appointments(store);
+  return list.find((a) => a.text.toLowerCase() === t) ?? list.find((a) => a.text.toLowerCase().includes(t) || t.includes(a.text.toLowerCase()));
+}
+
 /** Minutes until the Scheduled event an explicit wait names ("wait until supper"), so the clock lands on it exactly. */
 export function waitTarget(store: WorldStore, input: string): number | null {
   if (!/\b(?:until|till|for)\b/i.test(input)) return null;
@@ -512,6 +518,10 @@ const Review = z.object({
     .array(z.object({ text: z.string().min(1).max(200), time: z.string().max(5), days_ahead: z.number().int().min(0).max(30).catch(0), who: z.array(z.string()).max(6).catch([]) }))
     .max(2)
     .catch([]),
+  schedule_changes: z
+    .array(z.object({ text: z.string().min(1).max(200), change: z.enum(["moved", "cancelled", "done"]), time: z.string().max(5).nullable().catch(null), days_ahead: z.number().int().min(0).max(30).catch(0) }))
+    .max(2)
+    .catch([]),
   thread_updates: z
     .array(z.object({ id: z.string(), status: z.enum(["open", "resolved", "abandoned"]).catch("open"), note: z.string().max(300).nullable().catch(null) }))
     .max(3)
@@ -530,13 +540,15 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
  "facts":[{"text":str,"subjects":[ID]}],
  "threads":[{"title":str,"text":str,"participants":[ID],"urgency":"low"|"rising"|"urgent","deadline_hours":num|null}],
  "thread_updates":[{"id":ID,"status":"open"|"resolved"|"abandoned","note":str|null}],
- "appointments":[{"text":str,"time":"HH:MM","days_ahead":int,"who":[ID]}]}
+ "appointments":[{"text":str,"time":"HH:MM","days_ahead":int,"who":[ID]}],
+ "schedule_changes":[{"text":str,"change":"moved"|"cancelled"|"done","time":"HH:MM"|null,"days_ahead":int}]}
 - characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
 - threads: a NEW unresolved situation the protagonist now knows of that will still matter after this scene ends (days, not minutes): a debt, promise, threat, request, rivalry or mystery. Not a question asked in conversation, an instruction for the current task, or anything likely settled within the hour. Not already in Open threads. Most turns: none. deadline_hours only if a time limit was stated or clearly implied.
 - thread_updates: Open threads this passage resolved, abandoned (the protagonist refused or gave up), or clearly moved forward (status "open" with a short note). Usually none.
 - appointments: something set for a specific time that is not already Scheduled ("dinner's at seven", "meet me at the docks at dawn"). text: short, e.g. "dinner at Mara's". time: 24-hour, judged by context and the current Time (dinner at seven = 19:00, dawn = 06:00, noon = 12:00). days_ahead: 0 today, 1 tomorrow. who: ids involved. Usually none.
+- schedule_changes: only for a Scheduled item this passage changes. moved: it will now run early or late, or was rescheduled, for a reason shown in the passage (give the new time). cancelled: called off. done: it has now happened. text: as written in Scheduled. Usually none.
 Empty arrays when nothing applies.`;
 
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
@@ -581,7 +593,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
       },
     ],
   });
-  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [] };
+  let r: z.output<typeof Review> = { characters: [], details: [], facts: [], threads: [], thread_updates: [], references: [], appointments: [], schedule_changes: [] };
   try {
     r = Review.parse(JSON.parse(res.text.replace(/^```(?:json)?|```$/g, "").trim()));
   } catch {
@@ -604,6 +616,11 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
   for (const a of r.appointments) {
     const at = appointmentAt(clockMinutes(store), a.time, a.days_ahead);
     if (at !== null) ops.push({ op: "appointment", text: a.text, at, who: a.who.map((x) => x.replace(/^\[|\]$/g, "")).filter((x) => store.getEntity(x)) });
+  }
+  for (const c of r.schedule_changes) {
+    const hit = findAppointment(store, c.text);
+    const at = c.change === "moved" && c.time ? appointmentAt(clockMinutes(store), c.time, c.days_ahead) : null;
+    if (hit && (c.change !== "moved" || (at !== null && at !== hit.at))) ops.push({ op: "appointment_update", text: hit.text, status: c.change, at });
   }
   const me = store.getEntity(playerId);
   for (const c of r.characters.filter((c) => names.includes(c.name))) {
@@ -663,6 +680,8 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   let costUsd = 0;
   const engineOps: OpInput[] = [];
   let pace: Pace = "social";
+  /** An explicit wait already landed the clock on a Scheduled event; the narrator must not add more time. */
+  let waitLanded = false;
   let result = "";
   let interpreted: string | null = null;
 
@@ -685,6 +704,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       pace = p.pace;
       const cap = /\b(?:until|till|wait)/i.test(input) ? 1440 : p.pace === "quiet" && !/\b(?:sleep|slept|nap|doze|night)/i.test(input) ? QUIET_AWAKE_MINUTES : PACE_MINUTES[p.pace];
       const due = waitTarget(store, input);
+      waitLanded = due !== null;
       const minutes = due ?? (p.minutes ? Math.min(p.minutes, cap) : null);
       if (minutes) engineOps.push({ op: "time_advance", minutes });
       const me = store.getEntity(playerId);
@@ -848,7 +868,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     messages.push({ role: "assistant", content: raw }, { role: "user", content: "Stay in character as the narrator and continue the story per the rules." });
   }
   const { ops: parsedOps, prose } = splitNarration(raw);
-  const narratorOps = dedupeCreates(store, limitThoughts(parsedOps.map((op) => resolveIds(store, op)), budgets));
+  const narratorOps = dedupeCreates(store, limitThoughts(parsedOps.filter((op) => !(waitLanded && (op as { op?: unknown }).op === "time_advance")).map((op) => resolveIds(store, op)), budgets));
   const here = store.getEntity(playerId)?.parent_id ?? null;
   for (const op of narratorOps) {
     const o = op as { op?: unknown; kind?: unknown; parent?: unknown };

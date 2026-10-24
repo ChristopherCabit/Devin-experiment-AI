@@ -78,3 +78,24 @@ describe("waitTarget", () => {
     expect(waitTarget(store, "wait until dawn")).toBeNull();
   });
 });
+
+describe("schedule changes", () => {
+  it("moves a scheduled event later when the story gives a reason, shows the old time, and undo puts it back", async () => {
+    let review: unknown = {};
+    const { store, log, deps } = world((req) => (/keep the game's records/.test(String(req.messages[0]?.content)) ? JSON.stringify(review) : '<ops></ops>Mara swears at the oven. "Supper\'ll be late. Half nine."'));
+    const now = clockMinutes(store);
+    const hh = (m: number) => `${String(Math.floor((m % 1440) / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    applyOps(store, [{ op: "appointment", text: "supper at Mara's", at: now + 120, who: [] }], { source: "engine", turn: 0 });
+    review = { schedule_changes: [{ text: "Supper at Mara's", change: "moved", time: hh(now + 150), days_ahead: 0 }] };
+    await playTurn(deps, "say", "Is supper still on?");
+    expect(appointments(store)[0]?.at).toBe(now + 150);
+    expect(describeScene(store, PLAYER_ID).text).toMatch(/supper at Mara's at .*moved from/);
+    review = { schedule_changes: [{ text: "supper", change: "cancelled", time: null }] };
+    await playTurn(deps, "say", "Forget it then.");
+    expect(appointments(store)).toHaveLength(0);
+    log.undo();
+    expect(appointments(store)[0]?.at).toBe(now + 150);
+    log.undo();
+    expect(appointments(store)[0]?.at).toBe(now + 120);
+  });
+});

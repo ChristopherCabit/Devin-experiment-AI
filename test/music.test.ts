@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanStyle, cueKey, MusicDirector, musicPrompt, type Cue, type MusicSource } from "../src/game/music.js";
+import { cleanStyle, cueKey, MusicBank, MusicDirector, musicPrompt, type Cue, type MusicSource } from "../src/game/music.js";
 import type { FetchLike } from "../src/llm/client.js";
 import { generateMusic } from "../src/llm/music.js";
 import type { SpendMeter } from "../src/llm/spend.js";
@@ -92,5 +92,23 @@ describe("generateMusic", () => {
     expect(r.text).toBe("<instrumental>");
     expect(spent).toBeCloseTo(0.04);
     expect(sent).toMatchObject({ modalities: ["text", "audio"], stream: true, messages: [{ role: "user", content: "Instrumental only" }] });
+  });
+});
+
+describe("music bank", () => {
+  it("lists generated tracks with title and details, lists older tracks from their key, and deletes", async () => {
+    const files = new MemoryFiles();
+    const { src } = source([tense]);
+    await new MusicDirector(files).next("a", { ...src, model: "m/x", generate: async (p) => ({ ...(await src.generate(p)), costUsd: 0.08 }) });
+    await files.write(`music/${cueKey(calm, "old", "m/x")}.mp3`, new Uint8Array([9]));
+    const bank = new MusicBank(files);
+    const list = await bank.list();
+    expect(list.map((t) => t.title)).toEqual(["Held Breath Air", "Still Water Nocturne"]);
+    expect(list[0]).toMatchObject({ mood: "tense", energy: "medium", style: "medieval folk", model: "m/x", costUsd: 0.08, bytes: 3 });
+    expect(list[0]?.prompt).toMatch(/^Instrumental only/);
+    expect(list[1]).toMatchObject({ mood: "calm", energy: "low", prompt: null });
+    await bank.remove(list[0]!.key);
+    expect((await bank.list()).map((t) => t.title)).toEqual(["Still Water Nocturne"]);
+    await expect(bank.remove("../saves/main")).rejects.toThrow();
   });
 });

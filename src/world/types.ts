@@ -181,6 +181,8 @@ export const Appointment = z.object({
   at: z.number().int(),
   who: z.array(EntityId).default([]),
   created_turn: z.number().int().default(0),
+  /** The original time, once the story has moved it. */
+  was: z.number().int().nullable().default(null),
 });
 export type Appointment = z.infer<typeof Appointment>;
 
