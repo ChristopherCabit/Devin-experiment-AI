@@ -13,6 +13,8 @@ export interface ChatRequest {
   json?: boolean;
   /** Hidden reasoning tokens cost latency; "off" falls back to "low" on models where reasoning is mandatory. */
   reasoning?: "off" | "low" | "default";
+  /** Stream the completion, called with the text so far as it arrives. */
+  onText?: (sofar: string) => void;
 }
 
 export interface ChatResult {
@@ -26,6 +28,7 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
+  body?: ReadableStream<Uint8Array> | null;
 }>;
 
 export interface LlmClientOptions {
@@ -44,6 +47,12 @@ export class LlmError extends Error {
   ) {
     super(`llm request failed: ${status} ${code}`);
   }
+}
+
+interface StreamChunk {
+  choices?: { delta?: { content?: string | null } }[];
+  usage?: CompletionBody["usage"];
+  error?: { code?: string | number };
 }
 
 interface CompletionBody {
@@ -81,6 +90,7 @@ export class LlmClient {
       temperature: req.temperature ?? 0.8,
       ...(req.json ? { response_format: { type: "json_object" } } : {}),
       ...(mode === "off" ? { reasoning: { enabled: false } } : mode === "low" ? { reasoning: { effort: "low" } } : {}),
+      ...(req.onText ? { stream: true } : {}),
       provider: { zdr: true, data_collection: "deny" },
     };
   }
@@ -93,6 +103,7 @@ export class LlmClient {
       body: JSON.stringify(LlmClient.requestBody(req)),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
+    if (req.onText && res.ok && res.body) return this.readStream(req.onText, res.body);
     const body = (await res.json().catch(() => ({}))) as CompletionBody;
     if (res.status === 400 && (req.reasoning ?? "off") === "off" && /reasoning is mandatory/i.test(String(body.error?.message)) && !LlmClient.mandatoryReasoning.has(req.model)) {
       LlmClient.mandatoryReasoning.add(req.model);
@@ -108,5 +119,43 @@ export class LlmClient {
       completionTokens: body.usage?.completion_tokens ?? 0,
       costUsd,
     };
+  }
+
+  /** Reads an SSE completion. Chunks are only accumulated in memory, never logged. */
+  private async readStream(onText: (sofar: string) => void, stream: ReadableStream<Uint8Array>): Promise<ChatResult> {
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let text = "";
+    let usage: CompletionBody["usage"] = {};
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+        let chunk: StreamChunk;
+        try {
+          chunk = JSON.parse(data) as StreamChunk;
+        } catch {
+          continue;
+        }
+        if (chunk.error) throw new LlmError(200, String(chunk.error.code ?? "error"));
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          text += delta;
+          onText(text);
+        }
+        if (chunk.usage) usage = chunk.usage;
+      }
+      if (done) break;
+    }
+    const costUsd = usage?.cost ?? 0;
+    this.opts.meter.record(costUsd);
+    return { text, promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, costUsd };
   }
 }

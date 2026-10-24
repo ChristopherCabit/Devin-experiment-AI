@@ -24,6 +24,8 @@ export interface GameDeps {
   llm: { chat(req: ChatRequest): Promise<ChatResult> };
   playerId: string;
   rng?: () => number;
+  /** Receives the narration as it streams in, already stripped of ops. */
+  onText?: (prose: string) => void;
 }
 
 export interface TurnOutput {
@@ -214,6 +216,16 @@ export function limitThoughts<T>(ops: T[], budgets: Budget[]): T[] {
     left.set(o.npc, l - 1);
     return l > 0;
   });
+}
+
+/** What the player may see of a partial narrator draft: no ops blocks (closed or still open), no raw JSON, no line written for the player. */
+export function visibleProse(raw: string): string {
+  let s = raw.replace(/<ops>[\s\S]*?<\/ops>/gi, "").replace(/<ops>[\s\S]*$/i, "").replace(/<[a-z/]*$/i, "");
+  if (/^\s*(?:```|\{)/.test(s)) {
+    s = splitNarration(s).prose;
+    if (/^\s*(?:```|\{)/.test(s)) return "";
+  }
+  return s.split(/\n\s*>/)[0]?.trim() ?? "";
 }
 
 export function splitNarration(raw: string): { ops: unknown[]; prose: string; badLines: number } {
@@ -750,7 +762,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   ];
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning });
+    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(deps.onText ? { onText: (t: string) => deps.onText?.(visibleProse(t)) } : {}) });
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;

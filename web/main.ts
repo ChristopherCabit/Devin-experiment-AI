@@ -68,7 +68,10 @@ $("turn-form").onsubmit = async (ev) => {
   $("story").append(pending);
   $("story").scrollTop = $("story").scrollHeight;
   try {
-    const out = await game.turn(kind, input);
+    const out = await game.turn(kind, input, (t) => {
+      pending.textContent = t || "…";
+      $("story").scrollTop = $("story").scrollHeight;
+    });
     $("input").value = "";
     showTurn(out);
   } catch (e) {

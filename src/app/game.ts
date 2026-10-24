@@ -180,11 +180,11 @@ export class Game {
     return this.serial(async () => ({ ...(await run()), state: this.state() }));
   }
 
-  turn(kind: PlayKind, input: string): Promise<TurnOutput & { state: GameState }> {
+  turn(kind: PlayKind, input: string, onText?: (prose: string) => void): Promise<TurnOutput & { state: GameState }> {
     const b = parse(TurnBody, { kind, input });
     return this.play(() => {
       const llm = this.llm();
-      return playTurn({ ...this.W, llm, playerId: PLAYER_ID }, b.kind, b.input ?? "");
+      return playTurn({ ...this.W, llm, playerId: PLAYER_ID, ...(onText ? { onText } : {}) }, b.kind, b.input ?? "");
     });
   }
 
