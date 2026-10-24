@@ -471,6 +471,9 @@ const Review = z.object({
 });
 
 /** Words that suggest a thread may have started or moved even with nobody else present (a letter, a vow, a deadline). */
+/** Open threads beyond this are not created; old ones must resolve first. */
+const MAX_OPEN_THREADS = 12;
+
 const HOOK = /\b(?:owe|owed|debt|promis|swear|swore|vow|deadline|by (?:dawn|dusk|nightfall|morning|tomorrow)|threat|revenge|missing|letter|summon|warn|bounty|contract|job|quest|paid|repaid|settled)/i;
 
 const REVIEW_PROMPT = `You keep the game's records consistent with a story passage. Output JSON:
@@ -482,7 +485,7 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
 - characters: only names from Candidates that are a person or creature physically present in the passage (not places, groups, deities, or people merely mentioned). Never the protagonist ("you"), whatever name others call them.
 - details: lasting physical details or habits the passage established about a tracked character that their profile lacks (a scar, clothing, accent, a nervous habit). Not moods or momentary actions. Usually none.
 - facts: durable facts a later scene must not contradict that are not already known: who gave, left or owns what and why, promises, revealed history, injuries. Usually 0-2. Subjects are ids in [brackets].
-- threads: a NEW unresolved situation the protagonist now knows of that should matter later: a debt, promise, threat, request, rivalry or mystery. Not small talk, not already in Open threads. Usually none. deadline_hours only if a time limit was stated or clearly implied.
+- threads: a NEW unresolved situation the protagonist now knows of that will still matter after this scene ends (days, not minutes): a debt, promise, threat, request, rivalry or mystery. Not a question asked in conversation, an instruction for the current task, or anything likely settled within the hour. Not already in Open threads. Most turns: none. deadline_hours only if a time limit was stated or clearly implied.
 - thread_updates: Open threads this passage resolved, abandoned (the protagonist refused or gave up), or clearly moved forward (status "open" with a short note). Usually none.
 Empty arrays when nothing applies.`;
 
@@ -533,7 +536,9 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
   }
   if (s.threads) {
     const real = (ids: string[]) => ids.map((x) => x.replace(/^\[|\]$/g, "")).filter((x) => store.getEntity(x));
-    for (const t of r.threads) ops.push({ op: "thread", title: t.title, text: t.text, participants: real(t.participants), urgency: t.urgency, deadline_hours: t.deadline_hours });
+    const room = Math.max(0, MAX_OPEN_THREADS - openThreads.length);
+    for (const t of r.threads.slice(0, Math.min(1, room)))
+      ops.push({ op: "thread", title: t.title, text: t.text, participants: real(t.participants).filter((x) => x !== playerId), urgency: t.urgency, deadline_hours: t.deadline_hours });
     for (const u of r.thread_updates) {
       if (!openThreads.some((t) => t.id === u.id)) continue;
       ops.push({ op: "thread_update", id: u.id, ...(u.status !== "open" ? { status: u.status } : {}), ...(u.note ? { note: u.note } : {}) });
