@@ -50,6 +50,22 @@ describe("tool calls", () => {
   });
 });
 
+describe("tool rounds", () => {
+  it("keep only the passage written after the last lookup, not a draft or markup written alongside it", async () => {
+    const rounds = [
+      ['data: {"choices":[{"delta":{"content":"Mara turns the fox over twice.<too"}}]}\n\n', 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"recall","arguments":"{\\"query\\":\\"fox\\"}"}}]}}]}\n\ndata: [DONE]\n\n'],
+      ['data: {"choices":[{"delta":{"content":"She turns the fox over."}}]}\n\ndata: [DONE]\n\n'],
+    ];
+    let n = 0;
+    const fetch = () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), body: sse(rounds[n++] ?? []) });
+    const c = new LlmClient({ apiKey: "k", meter: { status: () => ({ blocked: false }), record: () => 0 } as never, fetch: fetch as never });
+    const seen: string[] = [];
+    const r = await c.chat({ model: "m", messages: [], maxTokens: 50, onText: (t) => seen.push(t), tools: [{ name: "recall", description: "d", parameters: { type: "object" } }], maxToolCalls: 1, onTool: () => "nothing" });
+    expect(r.text).toBe("She turns the fox over.");
+    expect(seen.at(-1)).toBe("She turns the fox over.");
+  });
+});
+
 describe("streaming", () => {
   it("accumulates deltas across split chunks, reports progress and records cost", async () => {
     let recorded = 0;

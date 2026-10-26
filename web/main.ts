@@ -281,7 +281,7 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "intensity", "limits", "corrections", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "memoryLookups", "memorySurfacing", "contextTokens", "recentTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
+const SETTINGS = ["title", "premise", "style", "era", "intensity", "limits", "corrections", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "narratorReasoning", "memoryLookups", "memorySurfacing", "contextTokens", "recentTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
 const BOOLS = new Set<string>(["memorySurfacing", "research", "music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
 const NUMERIC = new Set<string>(["researchMax", "thoughtsPerTurn", "contextTokens", "recentTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);
@@ -410,6 +410,7 @@ function brief() {
     progression: progressionFrom("n-prog"),
     title: $("n-title").value.trim() || "Untitled",
     premise: $<HTMLTextAreaElement>("n-premise").value,
+    era: $("n-era").value.trim(),
     situation: $<HTMLTextAreaElement>("n-situation").value,
     intensity: $("n-intensity").value,
     limits: $("n-limits").value,

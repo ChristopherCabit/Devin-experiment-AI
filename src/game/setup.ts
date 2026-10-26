@@ -69,6 +69,7 @@ export const WorldBrief = z.object({
   premise: Str(8000).default(""),
   situation: Str(4000).default(""),
   style: Str(2000).optional(),
+  era: Str(1000).default(""),
   intensity: z.enum(["none", "mild", "explicit"]).default("explicit"),
   limits: Str(2000).default(""),
   deathPolicy: z.enum(DEATH_POLICIES).default("consequence"),
@@ -179,6 +180,7 @@ export function buildSeed(spec: z.infer<typeof AdventureSpec>): Seed {
     powerCeiling: b.powerCeiling,
     unboundedPower: b.unboundedPower,
     ...(b.style ? { style: b.style } : {}),
+    ...(b.era ? { era: b.era } : {}),
   };
   return { settings, ops, opening: w.opening };
 }

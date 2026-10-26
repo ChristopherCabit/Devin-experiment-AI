@@ -41,6 +41,7 @@ const SettingsBody = z
     title: z.string().max(120),
     premise: z.string().max(8000),
     style: z.string().max(2000),
+    era: z.string().max(1000),
     intensity: z.enum(["none", "mild", "explicit"]),
     limits: z.string().max(2000),
     corrections: z.string().max(2000),

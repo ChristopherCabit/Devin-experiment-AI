@@ -153,3 +153,41 @@ describe("pseudo tool-call markup in narration", () => {
     expect(res.text).toBe("Mara sets down the ladle and says nothing for a while.");
   });
 });
+
+describe("who was there, and the protagonist's voice", () => {
+  it("each turn in the story window says who else was there", async () => {
+    const { store, log } = world();
+    play(store, log, "talk to Mara", "Mara wipes the bar.", ["character:mara"]);
+    play(store, log, "go down to the cellar", "Nobody down here but the barrels.", []);
+    const seen: ChatRequest[] = [];
+    const llm = { chat: (req: ChatRequest) => (seen.push(req), Promise.resolve({ text: isNarrator(req) ? "You wait." : "{}", promptTokens: 0, completionTokens: 0, costUsd: 0 })) };
+    await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "do", "wait");
+    const user = String(seen.find(isNarrator)?.messages[1]?.content);
+    expect(user).toMatch(/\[with Mara\]\n> You: talk to Mara/);
+    expect(user).toMatch(/\[alone\]\n> You: go down to the cellar/);
+  });
+
+  it("a passage that gives the protagonist a line they never said is written again", async () => {
+    const { store, log } = world();
+    const replies = ['"Supper," you say again, and Mara ladles stew.', "Mara ladles stew into a bowl and slides it across."];
+    let narr = 0;
+    const llm = { chat: (req: ChatRequest) => Promise.resolve({ text: isNarrator(req) ? (replies[narr++] ?? "") : "{}", promptTokens: 0, completionTokens: 0, costUsd: 0 }) };
+    const res = await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "do", "eat supper");
+    expect(narr).toBe(2);
+    expect(res.text).toBe("Mara ladles stew into a bowl and slides it across.");
+    narr = 0;
+    await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "do", "ask Mara for supper");
+    expect(narr).toBe(1);
+  });
+
+  it("a recorded fact alone keeps a memory ordinary; a new thread makes it notable", async () => {
+    const { store, log } = world();
+    let review = '{"memory":{"significance":0},"facts":[{"text":"Mara likes rain","subjects":["character:mara"]}]}';
+    const llm = { chat: (req: ChatRequest) => Promise.resolve({ text: isReview(req) ? review : isNarrator(req) ? "Mara watches the rain." : "{}", promptTokens: 0, completionTokens: 0, costUsd: 0 }) };
+    await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "do", "watch the rain with Mara");
+    expect(memoryOf(store, PLAYER_ID, last(log)).s).toBe(1);
+    review = '{"memory":{"significance":0},"threads":[{"title":"Debt","text":"Mara owes the Company","participants":["character:mara"],"urgency":"low","deadline_hours":null}]}';
+    await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "do", "ask Mara about the Company");
+    expect(memoryOf(store, PLAYER_ID, last(log)).s).toBe(2);
+  });
+});

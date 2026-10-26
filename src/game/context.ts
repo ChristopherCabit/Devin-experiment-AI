@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { TurnLog } from "../engine/turns.js";
+import type { TurnLog, TurnRecord } from "../engine/turns.js";
 import { appointments, charProps, clockMinutes, itemProps, roomProps, secrets } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
@@ -11,6 +11,8 @@ export interface WorldSettings {
   title: string;
   premise: string;
   style: string;
+  /** Setting and technology level (free text; may be a deliberate mix of eras). */
+  era: string;
   intensity: "none" | "mild" | "explicit";
   limits: string;
   /** Player-written corrections the narrator and record-keeper must obey over anything in the story so far. */
@@ -82,6 +84,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   title: "Untitled",
   premise: "",
   style: "Grounded, vivid, second person, present tense. Around 150-250 words per turn.",
+  era: "",
   intensity: "explicit",
   limits: "",
   corrections: "",
@@ -276,7 +279,7 @@ export function recentStory(log: TurnLog, budgetTokens: number): string {
 }
 
 /** The latest turns verbatim within budget, and the first turn number included. */
-export function storyWindow(log: TurnLog, budgetTokens: number): { text: string; from: number } {
+export function storyWindow(log: TurnLog, budgetTokens: number, label?: (t: TurnRecord) => string): { text: string; from: number } {
   const parts: string[] = [];
   let used = 0;
   let from = log.lastTurn() + 1;
@@ -285,7 +288,7 @@ export function storyWindow(log: TurnLog, budgetTokens: number): { text: string;
       from = t.n;
       continue;
     }
-    const block = turnBlock(t);
+    const block = label ? `${label(t)}\n${turnBlock(t)}` : turnBlock(t);
     used += approxTokens(block);
     if (used > budgetTokens) break;
     parts.unshift(block);

@@ -134,17 +134,21 @@ export class LlmClient {
     const messages = [...req.messages];
     const out: ChatResult = { text: "", promptTokens: 0, completionTokens: 0, costUsd: 0 };
     let calls = 0;
+    let draft = "";
     for (;;) {
       const last = calls >= max;
-      const before = out.text;
       const choice = last ? "none" : calls === 0 && req.toolChoice === "required" ? "required" : "auto";
-      const r = await this.once({ ...req, messages, toolChoice: choice, ...(req.onText ? { onText: (t: string) => req.onText?.(before + t) } : {}) });
-      out.text += r.text;
+      const r = await this.once({ ...req, messages, toolChoice: choice, ...(req.onText ? { onText: req.onText } : {}) });
       out.promptTokens += r.promptTokens;
       out.completionTokens += r.completionTokens;
       out.costUsd += r.costUsd;
       if (r.provider) out.provider = r.provider;
-      if (!r.toolCalls.length || last) return out;
+      if (!r.toolCalls.length || last) {
+        out.text = r.text.trim() ? r.text : draft;
+        return out;
+      }
+      // A draft written alongside a lookup is superseded by the passage written after it.
+      if (r.text.trim().length > draft.trim().length) draft = r.text;
       messages.push({ role: "assistant", content: r.text, tool_calls: r.toolCalls });
       for (const tc of r.toolCalls) {
         calls++;
