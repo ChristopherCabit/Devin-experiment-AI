@@ -57,3 +57,14 @@ describe("memories by meaning", () => {
     expect(log.history(1)[0]?.output).toBe(out.text);
   });
 });
+
+describe("indexing an existing save", () => {
+  it("fills in the oldest turns first", async () => {
+    const { log, embedded, deps } = world(() => "<ops></ops>Fine.");
+    const { indexTurns, normalize } = await import("../src/game/association.js");
+    await indexTurns(deps.store, log, async (texts) => ({ vectors: texts.map((t) => normalize(fakeVector(t))), costUsd: 0 }), 3);
+    expect(embedded).toEqual([]);
+    expect(log.history(5000).reverse().slice(1, 4).every((t) => deps.store.getMeta(`vec:${t.n}`, null))).toBe(true);
+    expect(deps.store.getMeta(`vec:${log.lastTurn()}`, null)).toBeNull();
+  });
+});

@@ -74,8 +74,8 @@ export function queryText(text: string): string {
   return QUERY + text;
 }
 
-/** Embeds turns that have no vector yet (newest first, a batch at a time). */
-export async function indexTurns(store: WorldStore, log: TurnLog, embed: Embed, batch = 64): Promise<number> {
+/** Embeds turns that have no vector yet, oldest first: the newest are still in the narrator's view anyway. */
+export async function indexTurns(store: WorldStore, log: TurnLog, embed: Embed, batch = 256): Promise<number> {
   const todo = log
     .history(5000)
     .filter((t) => t.kind !== "author" && t.output.trim() && !vectorOf(store, t))
@@ -107,7 +107,7 @@ export interface Candidate {
 export function candidates(store: WorldStore, log: TurnLog, playerId: string, before: number, present: Entity[]): Candidate[] {
   const people = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group);
   if (!people.length) return [];
-  const past = log.history(5000).reverse().filter((t) => t.n < before && t.kind !== "author" && t.output.trim());
+  const past = log.history(5000).filter((t) => t.n < before && t.kind !== "author" && t.output.trim());
   const out: Candidate[] = [];
   past.forEach((t, i) => {
     const v = vectorOf(store, t);
