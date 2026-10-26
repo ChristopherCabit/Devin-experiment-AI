@@ -145,11 +145,11 @@ export class SaveManager {
     return dest;
   }
 
-  async create(name: string): Promise<string> {
+  async create(name: string, seed: (store: WorldStore, log: TurnLog) => void = this.seed): Promise<string> {
     const id = newId();
     const store = new WorldStore();
     try {
-      this.seed(store, new TurnLog(store));
+      seed(store, new TurnLog(store));
       await this.files.write(this.file(id), store.serialize());
     } finally {
       store.close();

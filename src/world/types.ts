@@ -66,6 +66,8 @@ export const Sheet = z.object({
   abilities: z.record(z.string(), Tier).default({}),
   power_tier: Tier.default(1),
   resources: z.record(z.string(), Resource).default({}),
+  /** Practice toward the next tier, per attribute/skill/ability. */
+  progress: z.record(z.string(), z.number()).default({}),
 });
 export type Sheet = z.infer<typeof Sheet>;
 
@@ -76,6 +78,8 @@ export const CharacterProps = z
     scene: SceneState.default({}),
     mind: Mind.default({}),
     sheet: Sheet.default({}),
+    /** Set when this entity stands for several identical individuals (a squad, a gang, an army). */
+    group: z.object({ count: z.number().int().min(0) }).nullable().default(null),
   })
   .passthrough();
 export type CharacterProps = z.infer<typeof CharacterProps>;
@@ -103,6 +107,11 @@ export const ItemProps = z
     fixed: z.boolean().optional(),
     /** Zone within the room where a loose item lies. */
     zone: z.string().nullable().optional(),
+    /** Bonus to these stats while held or worn. */
+    grants: z.record(z.string(), z.number().int().min(-3).max(3)).optional(),
+    /** Stats raised to at least these tiers when the item is used up (tome, potion). */
+    teaches: z.record(z.string(), Tier).optional(),
+    consumable: z.boolean().optional(),
   })
   .passthrough();
 export type ItemProps = z.infer<typeof ItemProps>;
@@ -125,3 +134,66 @@ export const Fact = z.object({
   turn: z.number().int().nonnegative(),
 });
 export type Fact = z.infer<typeof Fact>;
+
+export const SECRET_KINDS = ["boon", "danger", "horror", "twist"] as const;
+export const URGENCIES = ["dormant", "stirring", "active"] as const;
+/** Hidden truth the protagonist hasn't learned. Scoped to its subjects (none = the whole world). */
+export const Secret = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(2000),
+  kind: z.enum(SECRET_KINDS).catch("twist"),
+  subjects: z.array(EntityId).default([]),
+  known_by: z.array(EntityId).default([]),
+  urgency: z.enum(URGENCIES).catch("dormant"),
+  revealed: z.boolean().default(false),
+  revealed_turn: z.number().int().nullable().default(null),
+  hinted_turn: z.number().int().nullable().default(null),
+  created_turn: z.number().int().default(0),
+});
+export type Secret = z.infer<typeof Secret>;
+
+export const THREAD_STATUS = ["open", "resolved", "abandoned"] as const;
+export const THREAD_URGENCY = ["low", "rising", "urgent"] as const;
+/** An unresolved situation: a debt, promise, threat, request, rivalry or mystery. Deadline is in clock minutes. */
+export const Thread = z.object({
+  id: z.string(),
+  title: z.string().min(1).max(120),
+  text: z.string().max(1000).default(""),
+  participants: z.array(EntityId).default([]),
+  place: EntityId.nullable().default(null),
+  status: z.enum(THREAD_STATUS).catch("open"),
+  urgency: z.enum(THREAD_URGENCY).catch("low"),
+  deadline: z.number().int().nullable().default(null),
+  known: z.boolean().default(true),
+  notes: z.array(z.string()).default([]),
+  created_turn: z.number().int().default(0),
+  touched_turn: z.number().int().default(0),
+});
+export type Thread = z.infer<typeof Thread>;
+
+/** A looked-up note about something real (a game, book, place) the story mentions. */
+export const Reference = z.object({ subject: z.string().min(1).max(120), note: z.string().max(1500), turn: z.number().int().default(0) });
+export type Reference = z.infer<typeof Reference>;
+
+/** Something set for a clock time ("dinner at seven"). `at` is in clock minutes. */
+export const Appointment = z.object({
+  text: z.string().min(1).max(200),
+  at: z.number().int(),
+  who: z.array(EntityId).default([]),
+  created_turn: z.number().int().default(0),
+  /** The original time, once the story has moved it. */
+  was: z.number().int().nullable().default(null),
+});
+export type Appointment = z.infer<typeof Appointment>;
+
+export const REACHES = ["local", "regional", "world"] as const;
+/** Something happening in the wider world. News of it spreads from its origin at a pace set by the world's connectedness. */
+export const WorldEvent = z.object({
+  id: z.string(),
+  text: z.string().min(1).max(600),
+  reach: z.enum(REACHES).catch("local"),
+  origin: EntityId.nullable().default(null),
+  at: z.number().int().default(0),
+  created_turn: z.number().int().default(0),
+});
+export type WorldEvent = z.infer<typeof WorldEvent>;
