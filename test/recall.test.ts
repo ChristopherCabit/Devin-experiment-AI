@@ -58,6 +58,17 @@ describe("recalling exact past passages", () => {
     expect(section(user, "## Recalled earlier passages")).toContain("swears on his brother's grave");
   });
 
+  it("gives each present character's important shared turns even when nothing in the input matches", async () => {
+    const { store, log, seen, deps } = world();
+    store.setMeta("settings", { recentTokens: 2000 });
+    for (let i = 0; i < 80; i++)
+      log.commit({ kind: "do", input: `look ${i}`, output: i === 4 ? "Mara admits the inn was her father's, and he drowned at the ford." : `${filler(i)} `.repeat(6), ops: i === 4 ? [{ op: "fact", text: "Mara's father drowned at the ford", subjects: ["character:mara"] }] : [], source: "engine" });
+    await playTurn(deps, "do", "sit at the bar");
+    const recalled = section(String(seen.find(isNarrator)?.messages[1]?.content), "## Recalled earlier passages");
+    expect(recalled).toContain("history with Mara");
+    expect(recalled).toContain("he drowned at the ford");
+  });
+
   it("labels the protagonist's lines in the story window", () => {
     const { log } = world();
     log.commit({ kind: "say", input: "The mine will save the inn.", output: "Mara shakes her head.", ops: [], source: "engine" });
