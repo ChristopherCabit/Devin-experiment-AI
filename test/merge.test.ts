@@ -140,22 +140,3 @@ describe("ops never leak into the story", () => {
     expect(splitNarration("She says [quietly] that {it} was fine.").prose).toBe("She says [quietly] that {it} was fine.");
   });
 });
-
-describe("stated positions", () => {
-  it("records who argued which side and shows it in the scene", async () => {
-    const { store, log, deps } = world((req) =>
-      isReview(req)
-        ? JSON.stringify({ stances: [{ who: "[character:mara]", topic: "reporting Rook", stance: "against; the guard is corrupt" }, { who: "character:you", topic: "reporting Rook", stance: "for" }, { who: "character:nobody", topic: "x", stance: "y" }] })
-        : "<ops></ops>Mara shakes her head.",
-    );
-    await playTurn(deps, "say", "We should report Rook.");
-    const { describeScene, stances, turnBlock } = await import("../src/game/context.js");
-    expect(stances(store).map((s) => s.who).sort()).toEqual(["character:mara", "character:you"]);
-    const scene = describeScene(store, "character:you").text;
-    expect(scene).toContain("Mara, on reporting Rook: against; the guard is corrupt");
-    expect(scene).toContain("You (the protagonist), on reporting Rook: for");
-    expect(turnBlock({ kind: "say", input: "Hi", output: "Mara nods." })).toBe('> You say: "Hi"\nMara nods.');
-    log.undo();
-    expect(stances(store)).toEqual([]);
-  });
-});

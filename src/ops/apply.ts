@@ -314,7 +314,7 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       store.deleteEntity(from.id);
       store.putEntity({ ...into, aliases, props });
       for (const e of store.allEntities()) if (e.id !== into.id && JSON.stringify(e).includes(`"${from.id}"`)) store.putEntity(swap(e));
-      for (const key of ["secrets", "threads", "appointments", "world_events", "stances"]) {
+      for (const key of ["secrets", "threads", "appointments", "world_events"]) {
         const v = store.getMeta<unknown>(key, null);
         if (v !== null && JSON.stringify(v).includes(`"${from.id}"`)) store.setMeta(key, swap(v));
       }
@@ -581,14 +581,6 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
         p.mind.relationship_notes[op.target] = op.text;
       });
       return {};
-
-    case "stance": {
-      need(store, op.who);
-      const key = op.topic.toLowerCase();
-      const list = store.getMeta<{ who: string; topic: string; stance: string; turn: number }[]>("stances", []).filter((x) => !(x.who === op.who && x.topic.toLowerCase() === key));
-      store.setMeta("stances", [...list, { who: op.who, topic: op.topic, stance: op.stance, turn: ctx.turn }].slice(-60));
-      return {};
-    }
 
     case "fact": {
       for (const s of op.subjects) need(store, s);
