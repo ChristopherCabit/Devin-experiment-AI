@@ -129,6 +129,7 @@ const Period = z.object({
         mood: z.array(z.string().max(30)).max(3).nullable().catch(null),
         event: z.string().max(300).nullable().catch(null),
         thought: z.string().max(300).nullable().catch(null),
+        opinion: z.object({ topic: z.string().min(1).max(80), view: z.string().min(1).max(200), why: z.string().min(1).max(200) }).nullable().catch(null),
       }),
     )
     .catch([]),
@@ -142,8 +143,9 @@ Rules:
 - They know only what they witnessed or were plausibly told. They cannot know what the protagonist did unless someone who saw it told them.
 - "where": a room id from Rooms if they moved, else null. They can't reach a place farther than the period allows, and never the protagonist's room.
 - "mood": 1-3 words if it changed, else null. "thought": a short private thought if something new is on their mind, else null.
+- "opinion": usually null. Only when something from this period (news they heard, an event, a talk with someone) would change their mind about a person or topic: the topic, their new view, and why. Never without a reason from this period.
 - "world_event": usually null. Only when asked for, something happening in the wider world fitting the setting's tone: "local" (this town), "regional" or "world" reach, with "origin" a place id or null.
-Output ONLY JSON: {"npcs":[{"id":ID,"where":ID|null,"mood":[str]|null,"event":str|null,"thought":str|null}],"world_event":{"text":str,"reach":str,"origin":ID|null}|null}`;
+Output ONLY JSON: {"npcs":[{"id":ID,"where":ID|null,"mood":[str]|null,"event":str|null,"thought":str|null,"opinion":{"topic":str,"view":str,"why":str}|null}],"world_event":{"text":str,"reach":str,"origin":ID|null}|null}`;
 
 /** One batched call for the whole period. Returns ops for the next turn's engine batch. */
 export async function simulatePeriod(
@@ -163,10 +165,10 @@ export async function simulatePeriod(
   const here = store.getEntity(playerId)?.parent_id ?? null;
   const rooms = store.entitiesOfKind("room").slice(0, 60);
   const card = (c: Entity) => {
-    const { life, ...props } = c.props;
+    const { life, opinions, ...props } = c.props;
     const lastLife = Array.isArray(life) ? (life as { text: string }[]).slice(-1).map((l) => l.text) : [];
     const heard = worldEvents(store).filter((e) => newsReached(store, e, c.parent_id, s)).slice(-2).map((e) => e.text);
-    return JSON.stringify({ id: c.id, name: c.name, at: c.parent_id, props: JSON.stringify(props).slice(0, 500), recently: lastLife, heard });
+    return JSON.stringify({ id: c.id, name: c.name, at: c.parent_id, props: JSON.stringify(props).slice(0, 500), opinions: opinions ?? {}, recently: lastLife, heard });
   };
   const open = threads(store).filter((t) => t.status === "open").slice(-8).map((t) => `[${t.id}] ${t.title}: ${t.text} (involves ${names(store, t.participants) || "?"})`);
   const user = [
@@ -187,6 +189,7 @@ export async function simulatePeriod(
   }
   const ids = new Set(npcs.map((c) => c.id));
   let events = 0;
+  let changed = 0;
   for (const n of parsed.npcs) {
     if (!ids.has(n.id)) continue;
     const c = store.getEntity(n.id);
@@ -198,6 +201,7 @@ export async function simulatePeriod(
       ops.push({ op: "life_event", npc: n.id, text: n.event.slice(0, 300) });
     }
     if (n.thought) ops.push({ op: "thought", npc: n.id, key: "offscreen", text: n.thought.slice(0, 300) });
+    if (n.opinion && changed++ < 2) ops.push({ op: "opinion", id: n.id, ...n.opinion });
   }
   const w = parsed.world_event;
   if (wantEvent && w) ops.push({ op: "world_event", text: w.text, reach: w.reach, origin: w.origin && store.getEntity(w.origin) ? w.origin : null });

@@ -21,6 +21,8 @@ export interface WorldSettings {
   /** Hidden reasoning for the narrator; models that require it fall back to low. */
   narratorReasoning: "off" | "low" | "default";
   contextTokens: number;
+  /** Cap on the verbatim recent story; older detail comes from chapters and recalled passages. */
+  recentTokens: number;
   /** Highest tier anyone normally reaches; the player is capped here unless unboundedPower is on. */
   powerCeiling: number;
   /** Manual switch for godlike play; never set by narration. */
@@ -84,6 +86,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   parserModel: "deepseek/deepseek-v4.1-flash-1017",
   narratorReasoning: "off",
   contextTokens: 32000,
+  recentTokens: 10000,
   powerCeiling: 6,
   unboundedPower: false,
   progression: { practice: true, mentors: true, cultivation: null },
@@ -164,7 +167,7 @@ export function scheduleLines(store: WorldStore): string[] {
     .map((a) => `Scheduled: ${a.text} at ${clockAt(a.at)} (${until(a.at - now)}${a.was !== null ? `; moved from ${clockAt(a.was)}` : ""})`);
 }
 
-const SPEC_SKIP = new Set(["is_player", "scene", "mind", "sheet", "age"]);
+const SPEC_SKIP = new Set(["is_player", "scene", "mind", "sheet", "age", "opinions"]);
 
 function itemLine(store: WorldStore, e: Entity, depth = 0): string[] {
   const p = itemProps(e);
@@ -212,6 +215,8 @@ function characterBlock(store: WorldStore, e: Entity, isPlayer: boolean): string
     if (thoughts.length) lines.push("  private thoughts:", ...thoughts.map(([k, t]) => `    (${k}) ${t}`));
     const notes = Object.entries(p.mind.relationship_notes);
     if (notes.length) lines.push(...notes.map(([id, t]) => `  about ${store.getEntity(id)?.name ?? id}: ${t}`));
+    const views = Object.entries((e.props.opinions as Record<string, string> | undefined) ?? {});
+    if (views.length) lines.push("  opinions (held unless the story shows them changing their mind):", ...views.map(([k, v]) => `    on ${k}: ${v}`));
   }
   const carried = store.children(e.id).filter((c) => !held.includes(c.name));
   if (isPlayer && carried.length) lines.push("  carrying:", ...carried.flatMap((c) => itemLine(store, c, 2)));
@@ -274,11 +279,17 @@ export function storyWindow(log: TurnLog, budgetTokens: number): { text: string;
       from = t.n;
       continue;
     }
-    const block = [t.input && t.kind !== "continue" ? `> ${t.input}` : "", t.output].filter(Boolean).join("\n");
+    const block = turnBlock(t);
     used += approxTokens(block);
     if (used > budgetTokens) break;
     parts.unshift(block);
     from = t.n;
   }
   return { text: parts.join("\n\n"), from };
+}
+
+/** A turn as the models read it, with the protagonist's input labelled as their words or actions. */
+export function turnBlock(t: { kind: string; input: string; output: string }): string {
+  const input = !t.input || t.kind === "continue" ? "" : t.kind === "say" ? `> You say: "${t.input}"` : t.kind === "do" ? `> You: ${t.input}` : `> ${t.input}`;
+  return [input, t.output].filter(Boolean).join("\n");
 }

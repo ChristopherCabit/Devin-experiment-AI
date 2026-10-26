@@ -554,6 +554,16 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
       });
       return {};
 
+    case "opinion":
+      editChar(store, op.id, (p) => {
+        if (p.is_player) fail("the protagonist's opinions are the player's");
+        const rec = p as Record<string, unknown>;
+        const key = op.topic.toLowerCase();
+        const held = Object.entries((rec.opinions as Record<string, string> | undefined) ?? {}).filter(([k]) => k.toLowerCase() !== key);
+        rec.opinions = Object.fromEntries([...held, [op.topic, op.why ? `${op.view} (changed because ${op.why})` : op.view]].slice(-12));
+      });
+      return {};
+
     case "thought":
       guardPlayerMind(store, op.npc, ctx);
       editChar(store, op.npc, (p) => {
