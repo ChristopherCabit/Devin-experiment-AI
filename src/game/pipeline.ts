@@ -108,7 +108,7 @@ const PROSE = `How to write (this matters more than anything else about the pros
 - The narrator is never witty. Humor only ever comes from a character who would actually say that thing (one whose profile makes them witty, playful or zany), and most lines of dialogue are ordinary.
 - Don't end paragraphs on a punchline, a zinger or a summing-up line. End on an action, a line of dialogue, or a plain detail.
 - No stock phrases: "something shifts", "can't quite read", "carries history", "doesn't miss a beat", "the ghost of a smile", "and she knows it", "lets it sit", "turns it over".
-- People talk the way real people do: short, a bit flat, sometimes awkward, rarely quotable.`;
+- People talk the way real people do, each in their own way, and say what they mean to the person in front of them: anyone listening understands what a line means and why it was said, given who they are to each other. Strangers don't talk in private shorthand. An annoying character is annoying the way real people are (needling, interrupting, oversharing, pushing a point), never cryptic.`;
 
 function narratorSystem(s: WorldSettings, explicitAllowed: string | null): string {
   const content =
