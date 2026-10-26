@@ -142,4 +142,14 @@ describe("pseudo tool-call markup in narration", () => {
     expect(narr).toBe(2);
     expect(res.text).toBe("You settle by the fire and let the warmth find your hands.");
   });
+
+  it("a reply that is only ops and a stray op name is asked for again", async () => {
+    const { store, log } = world();
+    const replies = ['emotion\n{"op":"emotion","npc":"character:mara","set":["moved"],"why":"the player spoke of a lost sister"}', "Mara sets down the ladle and says nothing for a while."];
+    let narr = 0;
+    const llm = { chat: (req: ChatRequest) => Promise.resolve({ text: isNarrator(req) ? (replies[narr++] ?? "") : "{}", promptTokens: 0, completionTokens: 0, costUsd: 0 }) };
+    const res = await playTurn({ store, log, llm, playerId: PLAYER_ID, rng: () => 0.9 }, "say", "My sister used to make stew like this.");
+    expect(narr).toBe(2);
+    expect(res.text).toBe("Mara sets down the ladle and says nothing for a while.");
+  });
 });

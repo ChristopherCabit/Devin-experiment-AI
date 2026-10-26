@@ -143,7 +143,7 @@ export interface Surfaced {
 export function surfaceMemory(
   store: WorldStore,
   log: TurnLog,
-  opts: { playerId: string; before: number; present: Entity[]; cues: string[]; weak?: string[]; times: Map<number, number>; now: number; rng: () => number; budgetTokens: number },
+  opts: { playerId: string; before: number; present: Entity[]; cues: string[]; weak?: string[]; named?: string[]; times: Map<number, number>; now: number; rng: () => number; budgetTokens: number },
 ): Surfaced | null {
   const { playerId, present, rng, now } = opts;
   const people = present.filter((c) => c.id !== playerId && !(c.props as { group?: unknown }).group).slice(0, 4);
@@ -157,6 +157,7 @@ export function surfaceMemory(
   const room = store.getEntity(store.getEntity(playerId)?.parent_id ?? "")?.id;
   const idxs = past.map((t) => memoryOf(store, playerId, t, match));
   // People who are simply around are a weak cue; a particular object, place or absent person is a strong one.
+  const named = new Set(opts.named ?? []);
   const weak = new Set([...people.map((c) => c.id), ...(opts.weak ?? []), ...(room ? [room] : [])]);
   const cands: { who: Entity; i: number; why: string[]; weight: number }[] = [];
   for (const who of people) {
@@ -169,8 +170,8 @@ export function surfaceMemory(
     const busy = turnNo - lastAny < 6 ? 0.25 : 1;
     for (const { x, i } of mine) {
       const shared = cues.filter((c) => x.e.includes(c));
-      // Routine moments don't come back on their own, and only notable ones come back from mere company.
-      if (!shared.length || x.s === 0 || (x.s < 2 && shared.every((c) => weak.has(c)))) continue;
+      // Ordinary moments only come back when something of theirs was just brought up, not from merely being around.
+      if (!shared.length || x.s === 0 || (x.s < 2 && !shared.some((c) => named.has(c) && !weak.has(c)))) continue;
       // Rare links (a carved fox) stir more than ever-present ones (the room they live in).
       const rel = shared.reduce((a, c) => a + Math.log((mine.length + 1) / (df.get(c) ?? 1)) * (weak.has(c) ? 0.35 : 1), 0);
       if (rel < 0.8) continue;

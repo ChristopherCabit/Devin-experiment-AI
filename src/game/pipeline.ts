@@ -1081,7 +1081,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;
-    const blank = !draft || (PSEUDO_TAG.test(raw) && draft.length < 40);
+    const blank = !draft || /^[a-z_]+$/.test(draft) || (PSEUDO_TAG.test(raw) && draft.length < 40);
     if (!blank && !REFUSAL.test(draft) && (settings.asides || !ASIDE.test(draft))) break;
     messages.push(
       { role: "assistant", content: raw || "(nothing)" },
@@ -1162,7 +1162,7 @@ async function parseIntent(deps: GameDeps, s: WorldSettings, input: string): Pro
  * People, places and objects in the scene or just mentioned: what might stir a memory. Weak cues are always
  * around (the people here, the room, what anyone carries); a thing on the shelf or something just named is strong.
  */
-function sceneCues(store: WorldStore, playerId: string, present: Entity[], said: string): { cues: string[]; weak: string[] } {
+function sceneCues(store: WorldStore, playerId: string, present: Entity[], said: string): { cues: string[]; weak: string[]; named: string[] } {
   const room = store.getEntity(playerId)?.parent_id ?? "";
   const ids = new Set<string>([...present.map((c) => c.id), ...(room ? [room] : [])]);
   const weak = new Set<string>(ids);
@@ -1172,12 +1172,13 @@ function sceneCues(store: WorldStore, playerId: string, present: Entity[], said:
       ids.add(x.id);
       weak.add(x.id);
     }
-  for (const id of entityMatcher(store, playerId)(said)) {
+  const named = entityMatcher(store, playerId)(said);
+  for (const id of named) {
     ids.add(id);
     if (!present.some((c) => c.id === id)) weak.delete(id);
   }
   ids.delete(playerId);
-  return { cues: [...ids], weak: [...weak] };
+  return { cues: [...ids], weak: [...weak], named: named.filter((id) => id !== playerId) };
 }
 
 function harm(store: WorldStore, playerId: string, s: WorldSettings, rng: () => number): OpInput[] {
