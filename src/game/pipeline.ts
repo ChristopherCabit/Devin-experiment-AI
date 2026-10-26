@@ -640,6 +640,8 @@ export function lookup(store: WorldStore, log: TurnLog, before: number, name: st
   } catch {
     query = args;
   }
+  // Some models leak tool-call markup into the arguments.
+  query = query.split("<")[0] ?? "";
   if (!/[a-z]{3}/i.test(query)) return "Give a few specific words: names, objects, places.";
   return recallPassages(store, log, before, query.slice(0, 200), LOOKUP_TOKENS, true) || "Nothing earlier matches. If it isn't in the story so far, the summaries or the facts, keep any mention of it vague.";
 }

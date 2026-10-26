@@ -63,7 +63,7 @@ describe("recalling exact past passages", () => {
     const asked: string[] = [];
     (deps.llm as { chat: (r: ChatRequest) => Promise<unknown> }).chat = async (r: ChatRequest) => {
       seen.push(r);
-      if (r.onTool && isNarrator(r)) asked.push(await r.onTool("recall", '{"query":"Elsbeth"}'), await r.onTool("recall", '{"query":"griffin saddle"}'));
+      if (r.onTool && isNarrator(r)) asked.push(await r.onTool("recall", '{"query":"Elsbeth"}'), await r.onTool("recall", '{"query":"griffin saddle"}'), await r.onTool("recall", '{"query":"Elsbeth</tool_call>"}'));
       return { text: "<ops></ops>Fine.", promptTokens: 0, completionTokens: 0, costUsd: 0 };
     };
     for (let i = 0; i < 120; i++) log.commit({ kind: "say", input: i === 3 ? "My sister Elsbeth drowned at Varrow." : `line ${i}`, output: `${filler(i)} `.repeat(8), ops: [], source: "engine" });
@@ -74,6 +74,7 @@ describe("recalling exact past passages", () => {
     expect(asked[0]).toContain('> You say: "My sister Elsbeth drowned at Varrow."');
     expect(asked[0]).toMatch(/### Day \d+, \d\d:\d\d \(turns/);
     expect(asked[1]).toMatch(/^Nothing earlier matches/);
+    expect(asked[2]).toBe(asked[0]);
     expect(String(narr?.messages[1]?.content)).not.toContain("Elsbeth");
   });
 
