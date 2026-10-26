@@ -22,6 +22,8 @@ export interface WorldSettings {
   narratorReasoning: "off" | "low" | "default";
   /** Narrator looks up earlier passages before writing: never, when it decides to, or every turn. */
   memoryLookups: "off" | "auto" | "always";
+  /** Lets things in the scene stir a related older memory in a character present. */
+  memorySurfacing: boolean;
   contextTokens: number;
   /** Cap on the verbatim recent story; older detail comes from chapters and recalled passages. */
   recentTokens: number;
@@ -88,6 +90,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   parserModel: "deepseek/deepseek-v4.1-flash-1017",
   narratorReasoning: "off",
   memoryLookups: "always",
+  memorySurfacing: true,
   contextTokens: 32000,
   recentTokens: 10000,
   powerCeiling: 6,

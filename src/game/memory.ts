@@ -2,6 +2,7 @@ import type { TurnLog, TurnRecord } from "../engine/turns.js";
 import type { ChatRequest } from "../llm/client.js";
 import type { WorldStore } from "../world/store.js";
 import { approxTokens, clockAt, turnBlock } from "./context.js";
+import { clarity, entityMatcher, memoryOf, strength } from "./recollection.js";
 
 /** A summary of a run of turns; `sig` ties it to the exact last turn so undone/replaced turns invalidate it. */
 export interface Chapter {
@@ -117,12 +118,29 @@ const STOP = new Set(
 const terms = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z'’-]{3,}/g) ?? []).map((w) => w.replace(/['’]s$/, "")).filter((w) => !STOP.has(w)));
 
 /** Verbatim passages from before the story window that share rare words with what is happening now, with a turn either side and the in-game time. */
-export function recallPassages(store: WorldStore, log: TurnLog, before: number, query: string, budgetTokens: number, lookup = false): string {
+export interface RecallOptions {
+  playerId?: string;
+  /** Recall as this character: only what they witnessed, weighted by how well they'd remember it. */
+  who?: string;
+  /** Follow the memory web from the best match to one linked memory. */
+  linked?: boolean;
+  onPick?: (turns: TurnRecord[]) => void;
+}
+
+export function recallPassages(store: WorldStore, log: TurnLog, before: number, query: string, budgetTokens: number, lookup = false, opts: RecallOptions = {}): string {
   if (budgetTokens < 200) return "";
   const all = log.history(5000);
-  const past = all.filter((t) => t.n < before && told(t));
-  if (past.length < 3) return "";
-  const times = turnClock(all, store.getMeta<number>("clock_minutes", 0));
+  const now = store.getMeta<number>("clock_minutes", 0);
+  const times = turnClock(all, now);
+  const { playerId, who } = opts;
+  const match = playerId ? entityMatcher(store, playerId) : undefined;
+  const idx = (t: TurnRecord) => (playerId ? memoryOf(store, playerId, t, match) : null);
+  const past = all.filter((t) => t.n < before && told(t) && (!who || !!idx(t)?.w.includes(who)));
+  if (past.length < (who ? 1 : 3)) return "";
+  const held = (t: TurnRecord) => {
+    const x = idx(t);
+    return x ? strength(x, times.get(t.n) ?? 0, now, who) : 1;
+  };
   const bags = past.map((t) => terms(turnBlock(t)));
   const df = new Map<string, number>();
   for (const b of bags) for (const w of b) df.set(w, (df.get(w) ?? 0) + 1);
@@ -136,10 +154,11 @@ export function recallPassages(store: WorldStore, log: TurnLog, before: number, 
   const hits = past
     .map((_, i) => {
       const shared = q.filter((w) => bags[i]?.has(w));
-      return { i, shared: shared.length, score: shared.reduce((a, w) => a + idf(w), 0) };
+      const score = shared.reduce((a, w) => a + idf(w), 0);
+      return { i, shared: shared.length, score, rank: playerId ? score * (0.5 + held(past[i] as TurnRecord)) : score };
     })
     .filter((x) => x.shared >= minShared && x.score >= need)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.rank - a.rank);
   const picked: [number, number][] = [];
   let used = 0;
   for (const h of hits) {
@@ -152,12 +171,36 @@ export function recallPassages(store: WorldStore, log: TurnLog, before: number, 
     used += cost;
     picked.push([a, b]);
   }
-  return picked
+  const name = who ? (store.getEntity(who)?.name ?? who) : "";
+  const head = (a: number, b: number) => {
+    const first = past[a] as TurnRecord;
+    const last = past[b] as TurnRecord;
+    return `${clockAt(times.get(first.n) ?? 0)} (turns ${first.n}-${last.n}${who ? `; ${name} ${clarity(Math.max(...past.slice(a, b + 1).map(held)))}` : ""})`;
+  };
+  const out = picked
     .sort((x, y) => x[0] - y[0])
-    .map(([a, b]) => {
-      const first = past[a] as TurnRecord;
-      const last = past[b] as TurnRecord;
-      return `### ${clockAt(times.get(first.n) ?? 0)} (turns ${first.n}-${last.n})\n${past.slice(a, b + 1).map(turnBlock).join("\n\n")}`;
-    })
-    .join("\n\n");
+    .map(([a, b]) => `### ${head(a, b)}\n${past.slice(a, b + 1).map(turnBlock).join("\n\n")}`);
+  const chosen = picked.flatMap(([a, b]) => past.slice(a, b + 1));
+  const top = hits.find((h) => picked.some(([a, b]) => h.i >= a && h.i <= b));
+  if (opts.linked && playerId && top) {
+    const room = store.getEntity(store.getEntity(playerId)?.parent_id ?? "")?.id;
+    const from = idx(past[top.i] as TurnRecord)?.e ?? [];
+    const edf = new Map<string, number>();
+    for (const t of past) for (const e of idx(t)?.e ?? []) edf.set(e, (edf.get(e) ?? 0) + 1);
+    const skip = new Set([playerId, who, room]);
+    const link = past
+      .map((t, i) => {
+        const shared = (idx(t)?.e ?? []).filter((e) => !skip.has(e) && from.includes(e));
+        return { i, t, shared, score: shared.reduce((a, e) => a + Math.log((past.length + 1) / (edf.get(e) ?? 1)), 0) * (0.5 + held(t)) };
+      })
+      .filter((x) => x.score > 0.5 && !picked.some(([a, b]) => x.i >= a - 1 && x.i <= b + 1))
+      .sort((a, b) => b.score - a.score)[0];
+    if (link && used + approxTokens(turnBlock(link.t)) + 40 <= budgetTokens) {
+      const via = link.shared.map((e) => store.getEntity(e)?.name).filter(Boolean).slice(0, 3).join(", ");
+      out.push(`### Linked memory (also involves ${via}): ${clockAt(times.get(link.t.n) ?? 0)} (turn ${link.t.n}${who ? `; ${name} ${clarity(held(link.t))}` : ""})\n${turnBlock(link.t)}`);
+      chosen.push(link.t);
+    }
+  }
+  if (chosen.length) opts.onPick?.(chosen);
+  return out.join("\n\n");
 }

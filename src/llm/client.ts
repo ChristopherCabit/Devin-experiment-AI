@@ -45,6 +45,8 @@ export interface ChatResult {
   promptTokens: number;
   completionTokens: number;
   costUsd: number;
+  /** Which upstream provider served it (metadata only). */
+  provider?: string;
 }
 
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{
@@ -75,12 +77,14 @@ export class LlmError extends Error {
 interface StreamChunk {
   choices?: { delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];
   usage?: CompletionBody["usage"];
+  provider?: string;
   error?: { code?: string | number };
 }
 
 interface CompletionBody {
   choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+  provider?: string;
   error?: { code?: string | number; message?: string };
 }
 
@@ -139,6 +143,7 @@ export class LlmClient {
       out.promptTokens += r.promptTokens;
       out.completionTokens += r.completionTokens;
       out.costUsd += r.costUsd;
+      if (r.provider) out.provider = r.provider;
       if (!r.toolCalls.length || last) return out;
       messages.push({ role: "assistant", content: r.text, tool_calls: r.toolCalls });
       for (const tc of r.toolCalls) {
@@ -175,6 +180,7 @@ export class LlmClient {
       promptTokens: body.usage?.prompt_tokens ?? 0,
       completionTokens: body.usage?.completion_tokens ?? 0,
       costUsd,
+      ...(body.provider ? { provider: body.provider } : {}),
     };
   }
 
@@ -186,6 +192,7 @@ export class LlmClient {
     let text = "";
     let usage: CompletionBody["usage"] = {};
     const calls: ToolCall[] = [];
+    let provider = "";
     for (;;) {
       const { done, value } = await reader.read();
       if (value) buf += dec.decode(value, { stream: true });
@@ -215,11 +222,12 @@ export class LlmClient {
           if (d.function?.arguments) tc.function.arguments += d.function.arguments;
         }
         if (chunk.usage) usage = chunk.usage;
+        if (chunk.provider) provider = chunk.provider;
       }
       if (done) break;
     }
     const costUsd = usage?.cost ?? 0;
     this.opts.meter.record(costUsd);
-    return { text, toolCalls: calls.filter(Boolean), promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, costUsd };
+    return { text, toolCalls: calls.filter(Boolean), promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, costUsd, ...(provider ? { provider } : {}) };
   }
 }
