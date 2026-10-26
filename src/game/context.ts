@@ -20,6 +20,8 @@ export interface WorldSettings {
   parserModel: string;
   /** Hidden reasoning for the narrator; models that require it fall back to low. */
   narratorReasoning: "off" | "low" | "default";
+  /** Narrator looks up earlier passages before writing: never, when it decides to, or every turn. */
+  memoryLookups: "off" | "auto" | "always";
   contextTokens: number;
   /** Cap on the verbatim recent story; older detail comes from chapters and recalled passages. */
   recentTokens: number;
@@ -85,6 +87,7 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   narratorModel: "z-ai/glm-5.3",
   parserModel: "deepseek/deepseek-v4.1-flash-1017",
   narratorReasoning: "off",
+  memoryLookups: "always",
   contextTokens: 32000,
   recentTokens: 10000,
   powerCeiling: 6,

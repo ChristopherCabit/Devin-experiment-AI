@@ -128,7 +128,7 @@ export function recallPassages(store: WorldStore, log: TurnLog, before: number, 
   for (const b of bags) for (const w of b) df.set(w, (df.get(w) ?? 0) + 1);
   const common = Math.max(2, past.length * 0.2);
   // A deliberate lookup names what it wants, so any shared word counts; automatic recall needs two rare ones.
-  const q = [...terms(query)].filter((w) => (df.get(w) ?? 0) > 0 && (lookup || (df.get(w) ?? 0) <= common));
+  const q = [...terms(query)].filter((w) => (df.get(w) ?? 0) > 0 && (df.get(w) ?? 0) <= (lookup ? Math.max(2, past.length * 0.5) : common));
   if (!q.length) return "";
   const idf = (w: string) => Math.log((past.length + 1) / (df.get(w) ?? 1));
   const need = lookup ? 0 : Math.max(3, Math.log(past.length + 1));

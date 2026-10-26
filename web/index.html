@@ -219,6 +219,11 @@
         <option value="low">Low</option>
         <option value="default">Model default (slow)</option>
       </select></label>
+      <label>Memory lookups <select id="s-memoryLookups">
+        <option value="always">Every turn (narrator recalls before writing; ~+$0.0007/turn, +1-2 s)</option>
+        <option value="auto">When the narrator decides (rarely used)</option>
+        <option value="off">Off</option>
+      </select></label>
       <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
       <datalist id="models-parser">
         <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>

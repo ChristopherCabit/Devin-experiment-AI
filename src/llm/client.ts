@@ -36,7 +36,8 @@ export interface ChatRequest {
   onTool?: (name: string, args: string) => Promise<string> | string;
   /** Most tool calls answered per request (default 2); after that the model must finish without them. */
   maxToolCalls?: number;
-  toolChoice?: "auto" | "none";
+  /** "required" forces a tool call in the first round only; later rounds are "auto", and the last "none". */
+  toolChoice?: "auto" | "none" | "required";
 }
 
 export interface ChatResult {
@@ -132,7 +133,8 @@ export class LlmClient {
     for (;;) {
       const last = calls >= max;
       const before = out.text;
-      const r = await this.once({ ...req, messages, toolChoice: last ? "none" : "auto", ...(req.onText ? { onText: (t: string) => req.onText?.(before + t) } : {}) });
+      const choice = last ? "none" : calls === 0 && req.toolChoice === "required" ? "required" : "auto";
+      const r = await this.once({ ...req, messages, toolChoice: choice, ...(req.onText ? { onText: (t: string) => req.onText?.(before + t) } : {}) });
       out.text += r.text;
       out.promptTokens += r.promptTokens;
       out.completionTokens += r.completionTokens;

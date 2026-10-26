@@ -70,6 +70,7 @@ describe("recalling exact past passages", () => {
     await playTurn(deps, "do", "sit at the bar");
     const narr = seen.find(isNarrator);
     expect(narr?.tools?.[0]?.name).toBe("recall");
+    expect(narr?.toolChoice).toBe("required");
     expect(asked[0]).toContain('> You say: "My sister Elsbeth drowned at Varrow."');
     expect(asked[0]).toMatch(/### Day \d+, \d\d:\d\d \(turns/);
     expect(asked[1]).toMatch(/^Nothing earlier matches/);
