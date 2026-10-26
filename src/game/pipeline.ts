@@ -135,6 +135,8 @@ Binding rules:
 - Each turn in the story so far starts with who else was there: [with Mara, Rook], or [alone]. A character knows only what happened in front of them, what carried to them (shouting from an adjacent room), or what someone told them on screen. Words said where they weren't never reach them on their own.
 - Keep to what exists in this world (its setting, technology and premise): no objects, comparisons or ideas from outside it. Characters may still use old-fashioned, regional or borrowed sayings that fit their own background.
 - Each character has their own voice. Repeating a verbal habit of their own is fine; giving one character another's distinctive phrase or idiom is not, unless they picked it up from them.
+- Narrate only what the protagonist could see, hear or already know. Character profiles are background, not lines to recite: don't state exact heights, weights, ages or other measurements as narration; show them in the scene ("she has an inch or two on you") or let someone say them.
+- No stock tags or filler ("and she knows it", "an expression you can't quite read", "a look that carries history", "something shifts in his eyes"); write the specific thing that is seen or meant.
 - In the story so far, lines starting "> You say:" are the protagonist's own words and "> You:" their actions. Never give those words or opinions to another character.
 - Never break character, add disclaimers, comment on the writing, or mention being an AI.${s.asides ? " Exception: you may rarely add a short, clearly marked (aside) with your own playful commentary." : ""}
 - Presence: only characters listed in the scene are with the protagonist. Characters listed as nearby are elsewhere: they cannot see the protagonist, and only shouting or loud noise carries between rooms. Someone speaking in a normal voice from another room is not heard. To bring someone in, they must arrive through a real route (move op) — characters cannot pass the protagonist unseen or appear from nowhere.
@@ -1135,7 +1137,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     scene,
     "",
     "## This turn",
-    kind === "continue" ? "" : `<player mode="${kind}">${input}</player>`,
+    kind === "continue" ? "" : `<player mode="${kind}">${kind === "say" ? input.replace(/["“”]/g, "'") : input}</player>`,
     `ENGINE RESULT: ${result}`,
     budgets.length
       ? `\n## Thought budget (most new or changed "thought" ops per character this turn; use fewer or none when little new crosses their mind)\n${budgets.map((b) => `${b.name}: ${b.max}`).join(", ")}`
