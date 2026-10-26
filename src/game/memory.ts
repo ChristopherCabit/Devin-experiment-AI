@@ -132,8 +132,11 @@ export function recallPassages(store: WorldStore, log: TurnLog, before: number, 
   const idf = (w: string) => Math.log((past.length + 1) / (df.get(w) ?? 1));
   const need = Math.max(3, Math.log(past.length + 1));
   const hits = past
-    .map((_, i) => ({ i, score: q.filter((w) => bags[i]?.has(w)).reduce((a, w) => a + idf(w), 0) }))
-    .filter((x) => x.score >= need)
+    .map((_, i) => {
+      const shared = q.filter((w) => bags[i]?.has(w));
+      return { i, shared: shared.length, score: shared.reduce((a, w) => a + idf(w), 0) };
+    })
+    .filter((x) => x.shared >= 2 && x.score >= need)
     .sort((a, b) => b.score - a.score);
   const picked: [number, number][] = [];
   let used = 0;
