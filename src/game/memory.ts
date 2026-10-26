@@ -116,10 +116,8 @@ const STOP = new Set(
 );
 const terms = (s: string) => new Set((s.toLowerCase().match(/[a-z][a-z'’-]{3,}/g) ?? []).map((w) => w.replace(/['’]s$/, "")).filter((w) => !STOP.has(w)));
 
-const SALIENT = /^(?:fact|opinion|relationship_note|appointment|thread\w*)$/;
-
-/** Verbatim passages from before the story window, with a turn either side and the in-game time: ones sharing rare words with what is happening now, then for each person present the turns where something lasting was recorded about them. */
-export function recallPassages(store: WorldStore, log: TurnLog, before: number, query: string, budgetTokens: number, people: { id: string; name: string }[] = []): string {
+/** Verbatim passages from before the story window that share rare words with what is happening now, with a turn either side and the in-game time. */
+export function recallPassages(store: WorldStore, log: TurnLog, before: number, query: string, budgetTokens: number, lookup = false): string {
   if (budgetTokens < 200) return "";
   const all = log.history(5000);
   const past = all.filter((t) => t.n < before && told(t));
@@ -129,45 +127,37 @@ export function recallPassages(store: WorldStore, log: TurnLog, before: number, 
   const df = new Map<string, number>();
   for (const b of bags) for (const w of b) df.set(w, (df.get(w) ?? 0) + 1);
   const common = Math.max(2, past.length * 0.2);
-  const q = [...terms(query)].filter((w) => (df.get(w) ?? 0) > 0 && (df.get(w) ?? 0) <= common);
+  // A deliberate lookup names what it wants, so any shared word counts; automatic recall needs two rare ones.
+  const q = [...terms(query)].filter((w) => (df.get(w) ?? 0) > 0 && (lookup || (df.get(w) ?? 0) <= common));
+  if (!q.length) return "";
   const idf = (w: string) => Math.log((past.length + 1) / (df.get(w) ?? 1));
-  const need = Math.max(3, Math.log(past.length + 1));
+  const need = lookup ? 0 : Math.max(3, Math.log(past.length + 1));
+  const minShared = lookup ? Math.min(2, q.length) : 2;
   const hits = past
     .map((_, i) => {
       const shared = q.filter((w) => bags[i]?.has(w));
       return { i, shared: shared.length, score: shared.reduce((a, w) => a + idf(w), 0) };
     })
-    .filter((x) => x.shared >= 2 && x.score >= need)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
-    .map((x) => ({ i: x.i, who: "" }));
-  const salience = (t: TurnRecord, id: string) => (t.ops as { op?: unknown }[]).filter((o) => SALIENT.test(String(o.op)) && JSON.stringify(o).includes(`"${id}"`)).length;
-  const shared = people.map((p) =>
-    past
-      .map((t, i) => ({ i, who: p.name, s: salience(t, p.id) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s || b.i - a.i)
-      .slice(0, 2),
-  );
-  const order = [...hits, ...[0, 1].flatMap((k) => shared.flatMap((l) => (l[k] ? [l[k]] : [])))];
-  const picked: [number, number, string][] = [];
+    .filter((x) => x.shared >= minShared && x.score >= need)
+    .sort((a, b) => b.score - a.score);
+  const picked: [number, number][] = [];
   let used = 0;
-  for (const h of order) {
-    if (picked.length >= 5) break;
+  for (const h of hits) {
+    if (picked.length >= 3) break;
     if (picked.some(([a, b]) => h.i >= a - 1 && h.i <= b + 1)) continue;
     const a = Math.max(0, h.i - 1);
     const b = Math.min(past.length - 1, h.i + 1);
     const cost = past.slice(a, b + 1).reduce((n, t) => n + approxTokens(turnBlock(t)), 0) + 20;
     if (used + cost > budgetTokens) continue;
     used += cost;
-    picked.push([a, b, h.who]);
+    picked.push([a, b]);
   }
   return picked
     .sort((x, y) => x[0] - y[0])
-    .map(([a, b, who]) => {
+    .map(([a, b]) => {
       const first = past[a] as TurnRecord;
       const last = past[b] as TurnRecord;
-      return `### ${clockAt(times.get(first.n) ?? 0)} (turns ${first.n}-${last.n}${who ? `; history with ${who}` : ""})\n${past.slice(a, b + 1).map(turnBlock).join("\n\n")}`;
+      return `### ${clockAt(times.get(first.n) ?? 0)} (turns ${first.n}-${last.n})\n${past.slice(a, b + 1).map(turnBlock).join("\n\n")}`;
     })
     .join("\n\n");
 }

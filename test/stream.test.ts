@@ -12,6 +12,44 @@ function sse(chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
+describe("tool calls", () => {
+  it("answers a streamed tool call mid-generation, continues, and stops offering tools after the limit", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const rounds = [
+      ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"recall","arguments":"{\\"query\\":"}}]}}]}\n\n', 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"fox\\"}"}}]}}],"usage":{"prompt_tokens":5,"completion_tokens":3,"cost":0.001}}\n\ndata: [DONE]\n\n'],
+      ['data: {"choices":[{"delta":{"content":"She turns the fox over."}}],"usage":{"prompt_tokens":9,"completion_tokens":6,"cost":0.002}}\n\ndata: [DONE]\n\n'],
+    ];
+    const fetch = (_url: string, init: { body: string }) => {
+      sent.push(JSON.parse(init.body) as Record<string, unknown>);
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}), body: sse(rounds[sent.length - 1] ?? []) });
+    };
+    let recorded = 0;
+    const meter = { status: () => ({ blocked: false }), record: (c: number) => (recorded += c) };
+    const c = new LlmClient({ apiKey: "k", meter: meter as never, fetch: fetch as never });
+    const asked: string[] = [];
+    const seen: string[] = [];
+    const r = await c.chat({
+      model: "m",
+      messages: [{ role: "user", content: "go" }],
+      maxTokens: 50,
+      onText: (t) => seen.push(t),
+      tools: [{ name: "recall", description: "d", parameters: { type: "object" } }],
+      maxToolCalls: 1,
+      onTool: (n, a) => (asked.push(`${n} ${a}`), "### Day 1, 20:00\nYou give Mara a carved fox."),
+    });
+    expect(asked).toEqual(['recall {"query":"fox"}']);
+    expect(r).toEqual({ text: "She turns the fox over.", promptTokens: 14, completionTokens: 9, costUsd: 0.003 });
+    expect(recorded).toBeCloseTo(0.003);
+    expect(seen.at(-1)).toBe("She turns the fox over.");
+    expect(sent[0]?.tool_choice).toBe("auto");
+    expect(sent[1]?.tool_choice).toBe("none");
+    expect(sent[1]?.provider).toEqual({ zdr: true, data_collection: "deny" });
+    const msgs = sent[1]?.messages as { role: string; tool_call_id?: string; content: string }[];
+    expect(msgs.at(-2)).toMatchObject({ role: "assistant", tool_calls: [{ id: "c1", function: { name: "recall", arguments: '{"query":"fox"}' } }] });
+    expect(msgs.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1" });
+  });
+});
+
 describe("streaming", () => {
   it("accumulates deltas across split chunks, reports progress and records cost", async () => {
     let recorded = 0;

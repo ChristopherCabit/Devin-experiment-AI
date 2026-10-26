@@ -58,15 +58,22 @@ describe("recalling exact past passages", () => {
     expect(section(user, "## Recalled earlier passages")).toContain("swears on his brother's grave");
   });
 
-  it("gives each present character's important shared turns even when nothing in the input matches", async () => {
-    const { store, log, seen, deps } = world();
-    store.setMeta("settings", { recentTokens: 2000 });
-    for (let i = 0; i < 80; i++)
-      log.commit({ kind: "do", input: `look ${i}`, output: i === 4 ? "Mara admits the inn was her father's, and he drowned at the ford." : `${filler(i)} `.repeat(6), ops: i === 4 ? [{ op: "fact", text: "Mara's father drowned at the ford", subjects: ["character:mara"] }] : [], source: "engine" });
+  it("answers a narrator lookup from any earlier turn, even on a single word", async () => {
+    const { log, seen, deps } = world();
+    const asked: string[] = [];
+    (deps.llm as { chat: (r: ChatRequest) => Promise<unknown> }).chat = async (r: ChatRequest) => {
+      seen.push(r);
+      if (r.onTool && isNarrator(r)) asked.push(await r.onTool("recall", '{"query":"Elsbeth"}'), await r.onTool("recall", '{"query":"griffin saddle"}'));
+      return { text: "<ops></ops>Fine.", promptTokens: 0, completionTokens: 0, costUsd: 0 };
+    };
+    for (let i = 0; i < 120; i++) log.commit({ kind: "say", input: i === 3 ? "My sister Elsbeth drowned at Varrow." : `line ${i}`, output: `${filler(i)} `.repeat(8), ops: [], source: "engine" });
     await playTurn(deps, "do", "sit at the bar");
-    const recalled = section(String(seen.find(isNarrator)?.messages[1]?.content), "## Recalled earlier passages");
-    expect(recalled).toContain("history with Mara");
-    expect(recalled).toContain("he drowned at the ford");
+    const narr = seen.find(isNarrator);
+    expect(narr?.tools?.[0]?.name).toBe("recall");
+    expect(asked[0]).toContain('> You say: "My sister Elsbeth drowned at Varrow."');
+    expect(asked[0]).toMatch(/### Day \d+, \d\d:\d\d \(turns/);
+    expect(asked[1]).toMatch(/^Nothing earlier matches/);
+    expect(String(narr?.messages[1]?.content)).not.toContain("Elsbeth");
   });
 
   it("labels the protagonist's lines in the story window", () => {
