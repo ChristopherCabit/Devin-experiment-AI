@@ -101,6 +101,15 @@ const PACE_MINUTES: Record<Pace, number> = { quiet: 600, intimate: 120, social: 
 
 const ASIDE = /\b(as an ai|language model|author'?s note|ooc\b|out of character|(this|that) (scene|passage|story|turn) (is|was) (beautifully|masterfully|well)|well[- ]written|my (writing|prose)|i (hope|think) (you|this|that) (enjoy|like|work)|nailed it|chef'?s kiss)/i;
 
+/** Measured against blind editor scoring: fewer stock lines and quips, and livelier characters, than without it. */
+const PROSE = `How to write (this matters more than anything else about the prose):
+- Write like a good contemporary novelist: plain, concrete, specific. Say what happens, what people do and say. Most sentences should be literal.
+- At most one figure of speech per passage, and only when it's genuinely fresh. No personifying objects (stairs that complain, rain that is patient), no jokey similes, no clever descriptions of ordinary things.
+- The narrator is never witty. Humor only ever comes from a character who would actually say that thing (one whose profile makes them witty, playful or zany), and most lines of dialogue are ordinary.
+- Don't end paragraphs on a punchline, a zinger or a summing-up line. End on an action, a line of dialogue, or a plain detail.
+- No stock phrases: "something shifts", "can't quite read", "carries history", "doesn't miss a beat", "the ghost of a smile", "and she knows it", "lets it sit", "turns it over".
+- People talk the way real people do: short, a bit flat, sometimes awkward, rarely quotable.`;
+
 function narratorSystem(s: WorldSettings, explicitAllowed: string | null): string {
   const content =
     s.intensity === "none"
@@ -116,6 +125,8 @@ ${s.premise ? `Premise:\n${s.premise}\n` : ""}${s.era.trim() ? `Setting and tech
 Content: ${content}${s.limits ? ` Hard limits (never include): ${s.limits}.` : ""} All characters in sexual content are adults.
 Death policy: ${s.deathPolicy}.${s.corrections.trim() ? `\nPLAYER CORRECTIONS (highest priority; they override the story so far, memory, records and anything below):\n${s.corrections.trim()}` : ""}
 Power scale: characters in this world reach about ${s.powerCeiling}/10.${s.progression.cultivation ? `\nCultivation realms (the ability "cultivation" is the index from 0): ${s.progression.cultivation.realms.join(" > ")}. Realms change only through the engine.` : ""}
+
+${PROSE}
 
 Binding rules:
 - The ENGINE RESULT is authoritative. Narrate that outcome exactly; do not soften failures or upgrade successes. Failures have real consequences.
@@ -136,7 +147,6 @@ Binding rules:
 - Keep to what exists in this world (its setting, technology and premise): no objects, comparisons or ideas from outside it. Characters may still use old-fashioned, regional or borrowed sayings that fit their own background.
 - Each character has their own voice. Repeating a verbal habit of their own is fine; giving one character another's distinctive phrase or idiom is not, unless they picked it up from them.
 - Narrate only what the protagonist could see, hear or already know. Character profiles are background, not lines to recite: don't state exact heights, weights, ages or other measurements as narration; show them in the scene ("she has an inch or two on you") or let someone say them.
-- No stock tags or filler ("and she knows it", "an expression you can't quite read", "a look that carries history", "something shifts in his eyes"); write the specific thing that is seen or meant.
 - In the story so far, lines starting "> You say:" are the protagonist's own words and "> You:" their actions. Never give those words or opinions to another character.
 - Never break character, add disclaimers, comment on the writing, or mention being an AI.${s.asides ? " Exception: you may rarely add a short, clearly marked (aside) with your own playful commentary." : ""}
 - Presence: only characters listed in the scene are with the protagonist. Characters listed as nearby are elsewhere: they cannot see the protagonist, and only shouting or loud noise carries between rooms. Someone speaking in a normal voice from another room is not heard. To bring someone in, they must arrive through a real route (move op) — characters cannot pass the protagonist unseen or appear from nowhere.
@@ -1180,7 +1190,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await narrate(
       llm,
-      { model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(canLookUp ? { tools: [RECALL_TOOL], maxToolCalls: MAX_LOOKUPS, toolChoice: settings.memoryLookups === "always" && hidden ? ("required" as const) : ("auto" as const), onTool: (name: string, args: string) => lookup(store, log, win.from, name, args, playerId) } : {}) },
+      { model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.7, reasoning: settings.narratorReasoning, ...(canLookUp ? { tools: [RECALL_TOOL], maxToolCalls: MAX_LOOKUPS, toolChoice: settings.memoryLookups === "always" && hidden ? ("required" as const) : ("auto" as const), onTool: (name: string, args: string) => lookup(store, log, win.from, name, args, playerId) } : {}) },
       { watch, show: (t) => deps.onText?.(fixNames(visibleProse(t))), maxPauses: MAX_PAUSES, resume: resumeNote },
     );
     costUsd += res.costUsd;
