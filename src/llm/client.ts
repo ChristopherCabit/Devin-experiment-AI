@@ -38,6 +38,8 @@ export interface ChatRequest {
   maxToolCalls?: number;
   /** "required" forces a tool call in the first round only; later rounds are "auto", and the last "none". */
   toolChoice?: "auto" | "none" | "required";
+  /** Stops a streamed generation early; the call then rejects with LlmAborted. */
+  signal?: AbortSignal;
 }
 
 export interface ChatResult {
@@ -49,7 +51,7 @@ export interface ChatResult {
   provider?: string;
 }
 
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{
+export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
   json(): Promise<unknown>;
@@ -74,7 +76,20 @@ export class LlmError extends Error {
   }
 }
 
+/** A generation stopped by the caller. Its cost is looked up afterwards and recorded on the meter; `cost` resolves to it. */
+export class LlmAborted extends Error {
+  constructor(readonly cost: Promise<number>) {
+    super("llm request aborted");
+  }
+}
+
+export interface EmbedResult {
+  vectors: number[][];
+  costUsd: number;
+}
+
 interface StreamChunk {
+  id?: string;
   choices?: { delta?: { content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];
   usage?: CompletionBody["usage"];
   provider?: string;
@@ -166,9 +181,12 @@ export class LlmClient {
       method: "POST",
       headers: { authorization: `Bearer ${this.opts.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify(sent),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: req.signal ? anySignal(req.signal, AbortSignal.timeout(this.timeoutMs)) : AbortSignal.timeout(this.timeoutMs),
+    }).catch((e: unknown) => {
+      if (req.signal?.aborted) throw new LlmAborted(Promise.resolve(0));
+      throw e;
     });
-    if (req.onText && res.ok && res.body) return this.readStream(req.onText, res.body);
+    if (req.onText && res.ok && res.body) return this.readStream(req.onText, res.body, req.signal);
     const body = (await res.json().catch(() => ({}))) as CompletionBody;
     if (res.status === 400 && triedOff && /reasoning is mandatory/i.test(String(body.error?.message))) {
       LlmClient.mandatoryReasoning.add(req.model);
@@ -189,7 +207,7 @@ export class LlmClient {
   }
 
   /** Reads an SSE completion. Chunks are only accumulated in memory, never logged. */
-  private async readStream(onText: (sofar: string) => void, stream: ReadableStream<Uint8Array>): Promise<ChatResult & { toolCalls: ToolCall[] }> {
+  private async readStream(onText: (sofar: string) => void, stream: ReadableStream<Uint8Array>, signal?: AbortSignal): Promise<ChatResult & { toolCalls: ToolCall[] }> {
     const reader = stream.getReader();
     const dec = new TextDecoder();
     let buf = "";
@@ -197,8 +215,20 @@ export class LlmClient {
     let usage: CompletionBody["usage"] = {};
     const calls: ToolCall[] = [];
     let provider = "";
+    let id = "";
     for (;;) {
-      const { done, value } = await reader.read();
+      if (signal?.aborted) {
+        void reader.cancel().catch(() => undefined);
+        throw new LlmAborted(this.lateCost(id));
+      }
+      let step: ReadableStreamReadResult<Uint8Array>;
+      try {
+        step = await reader.read();
+      } catch (e) {
+        if (signal?.aborted) throw new LlmAborted(this.lateCost(id));
+        throw e;
+      }
+      const { done, value } = step;
       if (value) buf += dec.decode(value, { stream: true });
       let nl: number;
       while ((nl = buf.indexOf("\n")) >= 0) {
@@ -214,6 +244,7 @@ export class LlmClient {
           continue;
         }
         if (chunk.error) throw new LlmError(200, String(chunk.error.code ?? "error"));
+        if (chunk.id) id = chunk.id;
         const delta = chunk.choices?.[0]?.delta?.content;
         if (delta) {
           text += delta;
@@ -228,10 +259,66 @@ export class LlmClient {
         if (chunk.usage) usage = chunk.usage;
         if (chunk.provider) provider = chunk.provider;
       }
+      if (signal?.aborted) {
+        void reader.cancel().catch(() => undefined);
+        throw new LlmAborted(this.lateCost(id));
+      }
       if (done) break;
     }
     const costUsd = usage?.cost ?? 0;
     this.opts.meter.record(costUsd);
     return { text, toolCalls: calls.filter(Boolean), promptTokens: usage?.prompt_tokens ?? 0, completionTokens: usage?.completion_tokens ?? 0, costUsd, ...(provider ? { provider } : {}) };
   }
+
+  /** What a stopped generation cost (generation stats, metadata only), recorded on the meter once known. */
+  private async lateCost(id: string): Promise<number> {
+    if (!id) return 0;
+    for (const wait of [800, 1500, 3000]) {
+      await new Promise((r) => setTimeout(r, wait));
+      try {
+        const res = await this.fetchImpl(`${this.baseUrl}/generation?id=${encodeURIComponent(id)}`, { method: "GET", headers: { authorization: `Bearer ${this.opts.apiKey}` }, signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) continue;
+        const cost = Number(((await res.json()) as { data?: { total_cost?: unknown } }).data?.total_cost ?? NaN);
+        if (Number.isFinite(cost)) {
+          this.opts.meter.record(cost);
+          return cost;
+        }
+      } catch {
+        /* try again */
+      }
+    }
+    return 0;
+  }
+
+  /** Embeds texts through a zero-retention provider. Only vectors come back; nothing is logged. */
+  async embed(model: string, texts: string[], dimensions: number, timeoutMs = this.timeoutMs): Promise<EmbedResult> {
+    const out: EmbedResult = { vectors: [], costUsd: 0 };
+    for (let k = 0; k < texts.length; k += 64) {
+      if (this.opts.meter.status().blocked) throw new SpendCapError();
+      const res = await this.fetchImpl(`${this.baseUrl}/embeddings`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.opts.apiKey}`, "content-type": "application/json" },
+                // Measured: DeepInfra answers in ~0.3 s, others take 1-9 s; any zero-retention provider is a fallback.
+        body: JSON.stringify({ model, input: texts.slice(k, k + 64), dimensions, provider: { zdr: true, data_collection: "deny", order: ["deepinfra", "siliconflow"], allow_fallbacks: true } }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const body = (await res.json().catch(() => ({}))) as { data?: { embedding?: number[] }[]; usage?: { cost?: number }; error?: { code?: string | number } };
+      if (!res.ok || body.error || body.data?.length !== Math.min(64, texts.length - k)) throw new LlmError(res.status, String(body.error?.code ?? "embed"));
+      const cost = body.usage?.cost ?? 0;
+      this.opts.meter.record(cost);
+      out.costUsd += cost;
+      for (const d of body.data) out.vectors.push(d.embedding ?? []);
+    }
+    return out;
+  }
+}
+
+function anySignal(...signals: AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(signals);
+  const c = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) c.abort();
+    else s.addEventListener("abort", () => c.abort(), { once: true });
+  }
+  return c.signal;
 }

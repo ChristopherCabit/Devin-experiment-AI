@@ -50,7 +50,7 @@ describe("recalling exact past passages", () => {
 
   it("the narrator gets a capped recent window plus the recalled passage", async () => {
     const { store, log, seen, deps } = world();
-    store.setMeta("settings", { recentTokens: 2000 });
+    store.setMeta("settings", { recentTokens: 2000, memoryLookups: "always", embedModel: "e" });
     for (let i = 0; i < 120; i++) turn(log, `look around ${i}`, i === 3 ? "Rook swears on his brother's grave to repay the ferryman by midsummer." : `${filler(i)} `.repeat(6));
     await playTurn(deps, "say", "Rook, did you ever repay the ferryman?");
     const user = String(seen.find(isNarrator)?.messages[1]?.content);
@@ -60,6 +60,7 @@ describe("recalling exact past passages", () => {
 
   it("answers a narrator lookup from any earlier turn, even on a single word", async () => {
     const { log, seen, deps } = world();
+    deps.store.setMeta("settings", { memoryLookups: "always", embedModel: "e" });
     const asked: string[] = [];
     (deps.llm as { chat: (r: ChatRequest) => Promise<unknown> }).chat = async (r: ChatRequest) => {
       seen.push(r);

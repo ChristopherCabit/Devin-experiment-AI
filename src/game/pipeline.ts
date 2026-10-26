@@ -11,6 +11,8 @@ import { appointmentAt, approxTokens, clockAt, describeScene, getSettings, sched
 import { chapterContext, recallPassages, turnClock, updateChapters } from "./memory.js";
 import { entityMatcher, memoryOf, recordMemory, rehearse, resolveWho, surfaceMemory } from "./recollection.js";
 import { phrasingNote } from "./phrasing.js";
+import { candidates, EMBED_DIMS, indexTurns, markRecalled, memoryText, normalize, primeMemories, queryText, stirredBy, type Candidate, type Embed, type RecallContext } from "./association.js";
+import { narrate, type Watch } from "./narrate.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
@@ -23,7 +25,7 @@ export type PlayKind = "do" | "say" | "story" | "continue";
 export interface GameDeps {
   store: WorldStore;
   log: TurnLog;
-  llm: { chat(req: ChatRequest): Promise<ChatResult> };
+  llm: { chat(req: ChatRequest): Promise<ChatResult>; embed?(model: string, texts: string[], dimensions: number, timeoutMs?: number): Promise<{ vectors: number[][]; costUsd: number }> };
   playerId: string;
   rng?: () => number;
   /** Receives the narration as it streams in, already stripped of ops. */
@@ -675,7 +677,33 @@ const REVIEW_PROMPT = `You keep the game's records consistent with a story passa
 - memory (always give it): how much this passage would stay with the people in it. 0 routine (small talk, walking about, a meal like any other); 1 ordinary but particular (a deal, a joke that landed, a small favour); 2 notable (a revelation, promise, fight, gift, first meeting, a real argument); 3 life-marking (a death, betrayal, confession of love, serious injury). moving_for: Tracked characters here for whom it was personally important beyond that (it was about them or hit them hard). Usually [].
 Empty arrays when nothing applies.`;
 
+function resumeNote(soFar: string, memory: string): string {
+  return `You were writing this turn's passage and stopped partway, because something just came to mind:
+<so_far>
+${soFar}
+</so_far>
+
+## Comes to mind now (optional; use it only if it would naturally surface here, in their own words and from their side, maybe in passing or half-said)
+${memory}
+
+Continue the passage from exactly where it stops: write only the rest, starting with the next sentence, and don't repeat anything already written. Ops already written stand; if what happens next needs more, put them in <ops></ops> at the very start of your reply.`;
+}
+
 /** After narration: creates characters the narrator named but never added, extends present characters' profiles, and records facts. */
+const indexing = new WeakMap<WorldStore, Promise<number>>();
+const MAX_PAUSES = 2;
+const PAUSE_TOKENS = 900;
+
+function embedder(llm: GameDeps["llm"], model: string): Embed | null {
+  const embed = llm.embed?.bind(llm);
+  if (!embed) return null;
+  // A memory that's slow to come is skipped rather than holding up the passage.
+  return async (texts, query) => {
+    const r = await embed(model, query ? texts.map(queryText) : texts, EMBED_DIMS, query ? 4000 : 30_000);
+    return { vectors: r.vectors.map(normalize), costUsd: r.costUsd };
+  };
+}
+
 const LOOKUP_TOKENS = 1500;
 const MAX_LOOKUPS = 2;
 const RECALL_TOOL = {
@@ -1034,7 +1062,9 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   const recallBudget = Math.min(1500, Math.floor(settings.contextTokens * 0.06));
   const canLookUp = settings.memoryLookups !== "off" && settings.contextTokens >= 12000;
   const lookupBudget = canLookUp ? LOOKUP_TOKENS * MAX_LOOKUPS + 300 : 0;
-  const surfBudget = settings.memorySurfacing ? Math.min(600, Math.floor(settings.contextTokens * 0.03)) : 0;
+  const embed = settings.memorySurfacing ? embedder(llm, settings.embedModel) : null;
+  const surfBudget = settings.memorySurfacing ? Math.min(embed ? 1200 : 600, Math.floor(settings.contextTokens * (embed ? 0.06 : 0.03))) : 0;
+  const pauseBudget = embed ? PAUSE_TOKENS + 400 : 0;
   const withWhom = (t: TurnRecord) => {
     const w = memoryOf(store, playerId, t)
       .w.filter((id) => id !== playerId)
@@ -1042,19 +1072,47 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
       .filter(Boolean);
     return w.length ? `[with ${w.join(", ")}]` : "[alone]";
   };
-  const win = storyWindow(log, Math.min(settings.recentTokens, Math.max(1000, settings.contextTokens - fixed - 600 - memBudget - recallBudget - lookupBudget - surfBudget)), withWhom);
+  const win = storyWindow(log, Math.min(settings.recentTokens, Math.max(1000, settings.contextTokens - fixed - 600 - memBudget - recallBudget - lookupBudget - surfBudget - pauseBudget)), withWhom);
   const recalled = recallPassages(store, log, win.from, `${input}\n${log.history(1)[0]?.output ?? ""}`, recallBudget);
   const story = win.text;
   const hidden = win.from > (log.history(5000)[0]?.n ?? win.from);
   const room = store.getEntity(store.getEntity(playerId)?.parent_id ?? "");
   const memory = chapterContext(store, log, win.from, [...present.flatMap((c) => [c.name, ...c.aliases]), ...(room ? [room.name] : [])], memBudget);
-  const stirred = surfBudget
+  const times = turnClock(log.history(5000), clockMinutes(store));
+  const rctx: RecallContext = { store, playerId, times, now: clockMinutes(store), turnNo, rng };
+  let cands: Candidate[] = [];
+  let primed = "";
+  const given = new Set<number>();
+  if (embed) {
+    try {
+      const ix = indexing.get(store);
+      indexing.delete(store);
+      costUsd += ix ? await ix : await indexTurns(store, log, embed);
+      cands = candidates(store, log, playerId, win.from, present);
+      if (cands.length >= 3) {
+        const lastOut = (log.history(1)[0]?.output ?? "").slice(-3000);
+        const qs = [lastOut, input].filter((x) => x.trim());
+        const r = await embed(qs, true);
+        costUsd += r.costUsd;
+        const lastV = lastOut.trim() ? r.vectors[0] ?? null : null;
+        const inV = input.trim() ? r.vectors[qs.length - 1] ?? null : null;
+        const p = primeMemories(rctx, cands, lastV, inV, surfBudget);
+        primed = p.text;
+        for (const t of p.turns) given.add(t.n);
+      }
+    } catch {
+      cands = [];
+    }
+  }
+  const stirred = primed
+    ? { text: primed }
+    : surfBudget && !(embed && cands.length >= 3)
     ? surfaceMemory(store, log, {
         playerId,
         before: win.from,
         present,
         ...sceneCues(store, playerId, present, `${input}\n${log.history(1)[0]?.output ?? ""}`),
-        times: turnClock(log.history(5000), clockMinutes(store)),
+        times,
         now: clockMinutes(store),
         rng,
         budgetTokens: surfBudget,
@@ -1085,7 +1143,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     background ? `\n${background}` : "",
     refs ? `\n${refs}` : "",
     stirred
-      ? `\n## Might come to mind (a memory something here could stir; optional. Use it only if it would naturally surface now, in their own words and from their side, maybe in passing or half-said; otherwise ignore it)\n${stirred.text}`
+      ? `\n## Might come to mind (${primed ? "memories close to the surface: something here or just said could bring one back" : "a memory something here could stir"}; optional. Use it only if it would naturally surface now, in their own words and from their side, maybe in passing or half-said; otherwise ignore it)\n${stirred.text}`
       : "",
     phrasing ? `\n## Phrasing\n${phrasing}` : "",
     hint ? `\n## Hidden from the protagonist\n${hintText(store, hint.secret)}` : "",
@@ -1097,9 +1155,32 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     { role: "system", content: system },
     { role: "user", content: user },
   ];
+  const skip = new Set(given);
+  const watch: Watch | null =
+    embed && cands.length >= 3
+      ? async (ss) => {
+          const r = await embed(ss, true);
+          costUsd += r.costUsd;
+          for (let i = 0; i < ss.length; i++) {
+            const v = r.vectors[i];
+            const c = v ? stirredBy(rctx, v, cands, skip) : null;
+            if (!c) continue;
+            skip.add(c.t.n);
+            const memory = memoryText(rctx, c, PAUSE_TOKENS);
+            if (!memory) continue;
+            markRecalled(rctx, [c.t]);
+            return { index: i, memory };
+          }
+          return null;
+        }
+      : null;
   let raw = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await llm.chat({ model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(canLookUp ? { tools: [RECALL_TOOL], maxToolCalls: MAX_LOOKUPS, toolChoice: settings.memoryLookups === "always" && hidden ? ("required" as const) : ("auto" as const), onTool: (name: string, args: string) => lookup(store, log, win.from, name, args, playerId) } : {}), ...(deps.onText ? { onText: (t: string) => deps.onText?.(fixNames(visibleProse(t))) } : {}) });
+    const res = await narrate(
+      llm,
+      { model: settings.narratorModel, messages, maxTokens: Math.ceil(settings.length * 1.6) + 400, temperature: 0.85, reasoning: settings.narratorReasoning, ...(canLookUp ? { tools: [RECALL_TOOL], maxToolCalls: MAX_LOOKUPS, toolChoice: settings.memoryLookups === "always" && hidden ? ("required" as const) : ("auto" as const), onTool: (name: string, args: string) => lookup(store, log, win.from, name, args, playerId) } : {}) },
+      { watch, show: (t) => deps.onText?.(fixNames(visibleProse(t))), maxPauses: MAX_PAUSES, resume: resumeNote },
+    );
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;
@@ -1151,6 +1232,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     const room2 = store.getEntity(playerId)?.parent_id;
     const there = room2 ? store.children(room2).filter((c) => c.kind === "character").map((c) => c.id) : [];
     recordMemory(store, playerId, committed, [...present.map((c) => c.id), ...there], mem.s, mem.m);
+    if (embed) indexing.set(store, indexTurns(store, log, embed).catch(() => 0));
   }
   costUsd += await updateChapters(store, log, llm, settings.parserModel, settings.corrections).catch(() => 0);
   if (found.length && references(store).length < settings.researchMax)

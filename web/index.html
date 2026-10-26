@@ -222,12 +222,13 @@
         <option value="default">Model default (slow)</option>
       </select></label>
       <label>Memory lookups <select id="s-memoryLookups">
-        <option value="always">Every turn (narrator recalls before writing; ~+$0.0007/turn, +1-2 s)</option>
-        <option value="auto">When the narrator decides (rarely used)</option>
+        <option value="auto">When the narrator decides (memories also come up by meaning on their own)</option>
+        <option value="always">Every turn (forced search before writing; ~+$0.002/turn, +3 s)</option>
         <option value="off">Off</option>
       </select></label>
-      <label><input id="s-memorySurfacing" type="checkbox"> Memories come up on their own (things in the scene can remind a character of something; free)</label>
+      <label><input id="s-memorySurfacing" type="checkbox"> Memories come up on their own, by meaning, even partway through a passage (a fraction of a cent per turn)</label>
       <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
+      <label>Memory-matching model (finds memories by meaning; zero-retention) <input id="s-embedModel"></label>
       <datalist id="models-parser">
         <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>
         <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro</option>

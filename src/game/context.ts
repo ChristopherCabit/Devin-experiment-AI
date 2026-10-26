@@ -26,6 +26,8 @@ export interface WorldSettings {
   memoryLookups: "off" | "auto" | "always";
   /** Lets things in the scene stir a related older memory in a character present. */
   memorySurfacing: boolean;
+  /** Embedding model that matches memories by meaning (zero-retention routing). */
+  embedModel: string;
   contextTokens: number;
   /** Cap on the verbatim recent story; older detail comes from chapters and recalled passages. */
   recentTokens: number;
@@ -92,8 +94,9 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   narratorModel: "z-ai/glm-5.3",
   parserModel: "deepseek/deepseek-v4.1-flash-1017",
   narratorReasoning: "off",
-  memoryLookups: "always",
+  memoryLookups: "auto",
   memorySurfacing: true,
+  embedModel: "qwen/qwen3-embedding-8b",
   contextTokens: 32000,
   recentTokens: 10000,
   powerCeiling: 6,
@@ -127,7 +130,10 @@ const SHORT_MUSIC = "google/lyria-3-clip-preview";
 const LEGACY_LENGTH: Record<string, number> = { short: 90, medium: 180, long: 350 };
 
 export function getSettings(store: WorldStore): WorldSettings {
-  const s = { ...DEFAULT_SETTINGS, ...store.getMeta<Partial<WorldSettings>>("settings", {}) };
+  const stored = store.getMeta<Partial<WorldSettings>>("settings", {});
+  const s = { ...DEFAULT_SETTINGS, ...stored };
+  // Saves from before meaning-based recall had forced lookups on by default; priming replaces them.
+  if (!("embedModel" in stored) && stored.memoryLookups === "always") s.memoryLookups = "auto";
   if (typeof s.length !== "number") s.length = LEGACY_LENGTH[String(s.length)] ?? DEFAULT_SETTINGS.length;
   if (s.narratorModel === LEGACY_MODEL) s.narratorModel = DEFAULT_SETTINGS.narratorModel;
   if (s.parserModel === LEGACY_MODEL) s.parserModel = DEFAULT_SETTINGS.parserModel;

@@ -83,7 +83,7 @@ describe("generateMusic", () => {
     ];
     const sse = `${lines.map((l) => `data: ${JSON.stringify(l)}\n\n`).join(": OPENROUTER PROCESSING\n")}data: [DONE]\n`;
     const fetch: FetchLike = async (_u, init) => {
-      sent = JSON.parse(init.body) as Record<string, unknown>;
+      sent = JSON.parse(init.body ?? "{}") as Record<string, unknown>;
       const bytes = new TextEncoder().encode(sse);
       return { ok: true, status: 200, json: async () => ({}), body: new ReadableStream({ start: (c) => (c.enqueue(bytes.slice(0, 50)), c.enqueue(bytes.slice(50)), c.close()) }) };
     };

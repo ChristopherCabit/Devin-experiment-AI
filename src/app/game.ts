@@ -48,6 +48,7 @@ const SettingsBody = z
     deathPolicy: z.enum(DEATH_POLICIES),
     narratorModel: z.string().min(1).max(120),
     parserModel: z.string().min(1).max(120),
+    embedModel: z.string().min(1).max(120),
     narratorReasoning: z.enum(["off", "low", "default"]),
     contextTokens: z.number().int().min(4000).max(128000),
     powerCeiling: z.number().int().min(1).max(10),
