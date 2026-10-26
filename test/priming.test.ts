@@ -64,7 +64,7 @@ describe("indexing an existing save", () => {
     const { indexTurns, normalize } = await import("../src/game/association.js");
     await indexTurns(deps.store, log, async (texts) => ({ vectors: texts.map((t) => normalize(fakeVector(t))), costUsd: 0 }), 3);
     expect(embedded).toEqual([]);
-    expect(log.history(5000).reverse().slice(1, 4).every((t) => deps.store.getMeta(`vec:${t.n}`, null))).toBe(true);
+    expect(log.history(5000).slice(1, 4).every((t) => deps.store.getMeta(`vec:${t.n}`, null))).toBe(true);
     expect(deps.store.getMeta(`vec:${log.lastTurn()}`, null)).toBeNull();
   });
 });
