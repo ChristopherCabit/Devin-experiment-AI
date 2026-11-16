@@ -13,6 +13,10 @@ export interface WorldSettings {
   style: string;
   /** Setting and technology level (free text; may be a deliberate mix of eras). */
   era: string;
+  /** Pin a style sample at the top of the narrator's instructions instead of the written style guidance. */
+  styleSampleOn: boolean;
+  /** A passage in the voice the narrator should write in; empty uses the bundled sample. */
+  styleSample: string;
   intensity: "none" | "mild" | "explicit";
   limits: string;
   /** Player-written corrections the narrator and record-keeper must obey over anything in the story so far. */
@@ -87,6 +91,8 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   premise: "",
   style: "Grounded, vivid, second person, present tense. Around 150-250 words per turn.",
   era: "",
+  styleSampleOn: false,
+  styleSample: "",
   intensity: "explicit",
   limits: "",
   corrections: "",

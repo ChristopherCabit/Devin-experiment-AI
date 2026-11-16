@@ -11,6 +11,7 @@ import { appointmentAt, approxTokens, clockAt, describeScene, getSettings, sched
 import { chapterContext, recallPassages, turnClock, updateChapters } from "./memory.js";
 import { entityMatcher, memoryOf, recordMemory, rehearse, resolveWho, surfaceMemory } from "./recollection.js";
 import { phrasingNote } from "./phrasing.js";
+import DEFAULT_SAMPLE from "./styles/default.md?raw";
 import { candidates, EMBED_DIMS, indexTurns, markRecalled, memoryText, normalize, primeMemories, queryText, stirredBy, type Candidate, type Embed, type RecallContext } from "./association.js";
 import { narrate, type Watch } from "./narrate.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
@@ -101,7 +102,7 @@ const PACE_MINUTES: Record<Pace, number> = { quiet: 600, intimate: 120, social: 
 
 const ASIDE = /\b(as an ai|language model|author'?s note|ooc\b|out of character|(this|that) (scene|passage|story|turn) (is|was) (beautifully|masterfully|well)|well[- ]written|my (writing|prose)|i (hope|think) (you|this|that) (enjoy|like|work)|nailed it|chef'?s kiss)/i;
 
-/** Measured against blind editor scoring: fewer stock lines and quips, and livelier characters, than without it. */
+/** Written style guidance; scored best of the variants tried (blind editor scoring) and is the default. */
 const PROSE = `How to write (this matters more than anything else about the prose):
 - Write like a good contemporary novelist: plain, concrete, specific. Say what happens, what people do and say. Most sentences should be literal.
 - At most one figure of speech per passage, and only when it's genuinely fresh. No personifying objects (stairs that complain, rain that is patient), no jokey similes, no clever descriptions of ordinary things.
@@ -109,6 +110,17 @@ const PROSE = `How to write (this matters more than anything else about the pros
 - Don't end paragraphs on a punchline, a zinger or a summing-up line. End on an action, a line of dialogue, or a plain detail.
 - No stock phrases: "something shifts", "can't quite read", "carries history", "doesn't miss a beat", "the ghost of a smile", "and she knows it", "lets it sit", "turns it over".
 - People talk the way real people do, each in their own way, and say what they mean to the person in front of them: anyone listening understands what a line means and why it was said, given who they are to each other. Strangers don't talk in private shorthand. An annoying character is annoying the way real people are (needling, interrupting, oversharing, pushing a point), never cryptic.`;
+
+/** With a style sample: failures seen in real play, concrete, so they don't need a style description. */
+const NEVER = `Never:
+- a joke, quip or wry aside from the narrator;
+- a paragraph that ends on a punchline or a summing-up line;
+- objects with feelings, or jokey similes;
+- a line of dialogue its listener couldn't follow.`;
+
+export function styleSample(s: WorldSettings): string {
+  return (s.styleSample.trim() || DEFAULT_SAMPLE).trim();
+}
 
 function narratorSystem(s: WorldSettings, explicitAllowed: string | null): string {
   const content =
@@ -119,14 +131,25 @@ function narratorSystem(s: WorldSettings, explicitAllowed: string | null): strin
         : s.intensity === "mild"
           ? "Sexual content is allowed but kept tasteful and non-graphic."
           : "Explicit sexual content is allowed and should be written fully, vividly and without euphemism when the story goes there. Do not rush or skip explicit scenes; pace them.";
-  return `You are the narrator of an interactive story. The reader is the protagonist, addressed as "you".
+  // The sample goes first and stays pinned: everything after it may be trimmed or summarised, it never is.
+  return `${
+    s.styleSampleOn
+      ? `Style sample: voice reference only. Do not respond to or reference its content.
+
+${styleSample(s)}
+
+==========
+
+`
+      : ""
+  }You are the narrator of an interactive story. The reader is the protagonist, addressed as "you".
 World: ${s.title}
 ${s.premise ? `Premise:\n${s.premise}\n` : ""}${s.era.trim() ? `Setting and technology: ${s.era.trim()}\n` : ""}Style: ${s.style}
 Content: ${content}${s.limits ? ` Hard limits (never include): ${s.limits}.` : ""} All characters in sexual content are adults.
 Death policy: ${s.deathPolicy}.${s.corrections.trim() ? `\nPLAYER CORRECTIONS (highest priority; they override the story so far, memory, records and anything below):\n${s.corrections.trim()}` : ""}
 Power scale: characters in this world reach about ${s.powerCeiling}/10.${s.progression.cultivation ? `\nCultivation realms (the ability "cultivation" is the index from 0): ${s.progression.cultivation.realms.join(" > ")}. Realms change only through the engine.` : ""}
 
-${PROSE}
+${s.styleSampleOn ? NEVER : PROSE}
 
 Binding rules:
 - The ENGINE RESULT is authoritative. Narrate that outcome exactly; do not soften failures or upgrade successes. Failures have real consequences.
