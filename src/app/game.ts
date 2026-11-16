@@ -3,6 +3,7 @@ import { generateMusic } from "../llm/music.js";
 import { z } from "zod";
 import { TurnLog } from "../engine/turns.js";
 import { DEATH_POLICIES, DEFAULT_SETTINGS, getSettings, Progression, type WorldSettings } from "../game/context.js";
+import { settleTurn, type Settled } from "../game/check.js";
 import { playTurn, type PlayKind, type TurnOutput } from "../game/pipeline.js";
 import { PLAYER_ID, STARTER, type Seed } from "../game/seeds.js";
 import { AdventureSpec, blankDraft, buildSeed, generateDraft, proposeStats, SetupError, WorldBrief, type WorldDraft, hourFromText } from "../game/setup.js";
@@ -274,6 +275,16 @@ export class Game {
       const llm = this.llm();
       this.W.log.undo();
       return playTurn({ ...this.W, llm, playerId: PLAYER_ID }, kind as PlayKind, input);
+    });
+  }
+
+  /** Check & fix on the latest passage: swaps contradicting phrases, then re-syncs the records with it. */
+  check(): Promise<Settled & { state: GameState }> {
+    const last = this.W.log.history(1)[0];
+    if (!last?.output || !["do", "say", "story", "continue"].includes(last.kind)) return Promise.reject(new GameError("nothing to check"));
+    return this.serial(async () => {
+      const r = await settleTurn({ ...this.W, llm: this.llm(), playerId: PLAYER_ID }, getSettings(this.W.store), last.n, { check: true });
+      return { ...r, state: this.state() };
     });
   }
 

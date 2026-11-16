@@ -84,3 +84,38 @@ describe("state sync", () => {
     expect(ops).toContainEqual({ op: "hold", character: PLAYER_ID, item: "item:key" });
   });
 });
+
+describe("check & fix", () => {
+  it("swaps only exact, unique quotes", async () => {
+    const { applyFixes } = await import("../src/game/check.js");
+    const r = applyFixes("You pay six coppers. Six is a lot.", [
+      { quote: "six coppers", replacement: "two coppers", why: "stew is 2" },
+      { quote: "missing", replacement: "x", why: "" },
+    ]);
+    expect(r.text).toBe("You pay two coppers. Six is a lot.");
+    expect(r.applied).toHaveLength(1);
+    expect(r.skipped).toHaveLength(1);
+  });
+
+  it("re-checking takes back the earlier sync, fixes the text and re-syncs within the same turn", async () => {
+    const { store, log } = world();
+    const { settleTurn } = await import("../src/game/check.js");
+    const { DEFAULT_SETTINGS } = await import("../src/game/context.js");
+    const turn = log.commit({ kind: "do", input: "pay", output: "You pay eight coppers for the stew.", ops: [], source: "engine" }).turn;
+    const replies = [
+      { coins: [{ id: PLAYER_ID, change: -8 }] },
+      { fixes: [{ quote: "eight coppers", replacement: "two coppers", why: "stew costs 2" }] },
+      { coins: [{ id: PLAYER_ID, change: -2 }] },
+    ];
+    const llm = { chat: () => Promise.resolve({ text: JSON.stringify(replies.shift()), promptTokens: 0, completionTokens: 0, costUsd: 0.001 }) };
+    const deps = { store, log, llm, playerId: PLAYER_ID };
+    await settleTurn(deps, DEFAULT_SETTINGS, turn, { check: false });
+    expect(charProps(store.getEntity(PLAYER_ID)!).sheet.resources.coin?.value).toBe(1);
+    const r = await settleTurn(deps, DEFAULT_SETTINGS, turn, { check: true });
+    expect(r.text).toBe("You pay two coppers for the stew.");
+    expect(log.history(1)[0]?.output).toBe(r.text);
+    expect(charProps(store.getEntity(PLAYER_ID)!).sheet.resources.coin?.value).toBe(7);
+    log.undo();
+    expect(charProps(store.getEntity(PLAYER_ID)!).sheet.resources.coin?.value).toBe(9);
+  });
+});

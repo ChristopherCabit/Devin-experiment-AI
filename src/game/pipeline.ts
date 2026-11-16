@@ -14,7 +14,7 @@ import { phrasingNote } from "./phrasing.js";
 import DEFAULT_SAMPLE from "./styles/default.md?raw";
 import { candidates, EMBED_DIMS, indexTurns, markRecalled, memoryText, normalize, primeMemories, queryText, stirredBy, type Candidate, type Embed, type RecallContext } from "./association.js";
 import { narrate, type Watch } from "./narrate.js";
-import { syncState } from "./sync.js";
+import { settleTurn } from "./check.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
@@ -1288,13 +1288,10 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   const advanced = waitLanded
     ? Infinity
     : [...engineOps, ...(narratorOps as OpInput[])].reduce((n, o) => n + (o.op === "time_advance" ? Number((o as { minutes?: number }).minutes ?? 0) : 0), 0);
-  const settle = settings.stateSync
-    ? async () => {
-        const r = await syncState(llm, store, playerId, settings, said, prose, advanced, namedIn(store, prose).filter((c) => c.id !== playerId));
-        if (r.ops.length) log.amend(turn, [{ source: "engine", ops: r.ops }]);
-        return r.cost;
-      }
-    : undefined;
+  const settle =
+    settings.stateSync || settings.checkAuto
+      ? async () => (await settleTurn({ store, log, llm, playerId }, settings, turn, { check: settings.checkAuto, advanced })).cost
+      : undefined;
   return { turn, text: prose, interpreted, rejected, costUsd, ...(settle ? { settle } : {}) };
 }
 

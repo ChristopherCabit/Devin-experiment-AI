@@ -17,6 +17,7 @@ function clockText(m: number) {
 }
 
 function render(s: GameState, jump = false) {
+  $("btn-check").hidden = !game.settings().checkButton;
   $("title").textContent = s.settings.title;
   const hp = s.sheet?.resources?.hp as { value: number; max?: number } | undefined;
   $("status").textContent = [clockText(s.clock), s.location, s.zone, hp ? `HP ${hp.value}/${hp.max ?? "?"}` : null, ...s.conditions].filter(Boolean).join(" · ");
@@ -46,7 +47,7 @@ function render(s: GameState, jump = false) {
 }
 
 function busy(on: boolean) {
-  for (const id of ["btn-send", "btn-undo", "btn-retry"]) $<HTMLButtonElement>(id).disabled = on;
+  for (const id of ["btn-send", "btn-undo", "btn-retry", "btn-check"]) $<HTMLButtonElement>(id).disabled = on;
 }
 
 const music = new MusicPlayer();
@@ -113,6 +114,22 @@ $("btn-retry").onclick = async () => {
   busy(true);
   try {
     showTurn(await game.retry());
+  } catch (e) {
+    $("interpreted").textContent = errText(e);
+  }
+  busy(false);
+};
+
+$("btn-check").onclick = async () => {
+  busy(true);
+  $("interpreted").textContent = "Checking the passage…";
+  try {
+    const r = await game.check();
+    render(r.state);
+    $("interpreted").textContent =
+      (r.applied.length ? `Fixed: ${r.applied.map((f) => `"${f.quote}" → "${f.replacement}"${f.why ? ` (${f.why})` : ""}`).join("; ")}` : "No contradictions found.") +
+      (r.skipped.length ? ` · couldn't place ${r.skipped.length} fix${r.skipped.length > 1 ? "es" : ""}: ${r.skipped.map((f) => f.why || f.quote).join("; ")}` : "") +
+      (r.notes.length ? ` · ${r.notes.join("; ")}` : "");
   } catch (e) {
     $("interpreted").textContent = errText(e);
   }
