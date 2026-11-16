@@ -353,6 +353,13 @@ export function splitNarration(raw: string): { ops: unknown[]; prose: string; ba
       return false;
     })
     .join("\n");
+  // Ops written inline in the prose, half-tagged ops, and lines left JSON-escaped.
+  rest = rest
+    .replace(/\{\s*"op"\s*:\s*"[a-z_]+"[^{}]*\}/gi, (m) => take(m))
+    .replace(/<\/?ops?"?\s*:?\s*"[^\n]*?"\s*\}?\s*>?(?=\s{2,}|\n|$)/gi, "")
+    .split("\n")
+    .filter((l) => !/^\s*"[^"\n]*\\"/.test(l))
+    .join("\n");
   for (const line of lines.map((l) => l.trim().replace(/,$/, "")).filter((l) => l && l !== "[" && l !== "]" && l !== "[]")) {
     try {
       const v = JSON.parse(line) as unknown;
@@ -481,8 +488,9 @@ export function travelOps(
     return { name: to.name, ops: [{ op: "move", id: playerId, to: to.id }, { op: "time_advance", minutes }] };
   }
   // "the bar" is usually a spot in this room (or a nearby one), not a room of its own.
-  const spot = keyWords(destination).join(" ");
-  const zoneIn = (r: Entity) => (spot ? roomProps(r).zones.find((z) => keyWords(z).join(" ") === spot) : undefined);
+  const bare = (x: string) => normalizeName(x).replace(/^(?:the|a|an|my|your|our)\s+/, "").trim();
+  const spot = bare(destination);
+  const zoneIn = (r: Entity) => (spot ? roomProps(r).zones.find((z) => bare(z) === spot) : undefined);
   const nearRooms = [here, ...(building ? store.entitiesOfKind("room").filter((r) => r.id !== here.id && ancestors(store, r.id).some((a) => a.id === building.id)) : [])];
   for (const r of nearRooms) {
     const z = zoneIn(r);

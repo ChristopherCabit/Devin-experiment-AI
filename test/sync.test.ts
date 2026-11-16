@@ -119,3 +119,34 @@ describe("check & fix", () => {
     expect(charProps(store.getEntity(PLAYER_ID)!).sheet.resources.coin?.value).toBe(9);
   });
 });
+
+describe("travel to a spot", () => {
+  it("'the bar' sets your spot in the Common Room instead of creating a room", async () => {
+    const { store } = world();
+    const { travelOps } = await import("../src/game/pipeline.js");
+    const you = store.getEntity(PLAYER_ID)!;
+    store.putEntity({ ...you, parent_id: "room:common" });
+    const r = travelOps(store, PLAYER_ID, "the bar", "same_building");
+    expect(r?.ops[0]).toEqual({ op: "set_zone", id: PLAYER_ID, zone: "bar" });
+    expect(r?.ops.some((o) => o.op === "create_entity")).toBe(false);
+  });
+});
+
+describe("sync id cleanup and prose leaks", () => {
+  it("coins reported for 'you' land on the player", async () => {
+    const { store } = world();
+    const { syncOps, SyncResult } = await import("../src/game/sync.js");
+    const r = SyncResult.parse({ minutes: 1, coins: [{ id: "you", change: -1, why: "ale" }] });
+    const ops = syncOps(store, PLAYER_ID, r, 0, [store.getEntity(PLAYER_ID)!], []);
+    expect(JSON.stringify(ops)).toContain(PLAYER_ID);
+    expect(ops.some((o) => o.op === "resource_delta")).toBe(true);
+  });
+  it("strips inline and half-tagged ops from the passage", async () => {
+    const { splitNarration } = await import("../src/game/pipeline.js");
+    const a = splitNarration('{"op":"time_advance","minutes":150}The knock came to nothing.');
+    expect(a.prose).toBe("The knock came to nothing.");
+    expect(a.ops).toHaveLength(1);
+    const b = splitNarration('<op":"thought","npc":"character:tamsin","key":"name","text":"He dodged the name."  Tamsin picks the hoof pick up.');
+    expect(b.prose).toBe("Tamsin picks the hoof pick up.");
+  });
+});

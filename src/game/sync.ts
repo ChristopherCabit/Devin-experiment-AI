@@ -20,7 +20,7 @@ export const SYNC_PROMPT = `You keep a story game's records in line with what th
  "details":[{"text":str,"kind":"price"|"wage"|"deadline"|"agreement"|"ownership"|"said"|"fact","subjects":[ID],"replaces":int|null}],
  "earshot":[{"a":ID,"b":ID,"open":bool}]}
 - minutes: in-story time the whole passage covers, counted from the end of the previous passage (a short exchange 1-3, a meal 30, a night's sleep 480). 0 if it only describes a moment.
-- people: everyone in the records whose room, spot (zone), posture or what they hold in their hands is now different. room: a Place id when they end up in a known place. left_for: when they leave for somewhere not listed, a short name for it ("the forge", "upstairs"); room null then. holding: the full list of what is in their hands at the end (at most 2), [] for empty hands. Use null for anything unchanged. Never invent movement the passage doesn't show.
+- people: everyone in the records whose room, spot (zone), posture or what they hold in their hands is now different. room: a Place id when they end up in a known place. left_for: when they leave for somewhere not listed, the short name of that place ("the forge", "the street", "upstairs"), not a phrase; room null then. holding: the full list of what is in their hands at the end (at most 2), [] for empty hands. Use null for anything unchanged. Never invent movement the passage doesn't show.
 - coins: money that changed hands in the passage. now: the purse total when the passage makes it clear; otherwise change (+ received, - paid). Coins are counted in the smallest coin the records use. Only for people whose Coin is listed.
 - items: a thing put down, moved, left behind or newly shown in a specific place that matters (not scenery). where: a Place or person id.
 - details: concrete specifics a later scene must not contradict that are not already in Established details: prices, wages, debts, deadlines and times agreed, deals and promises, who owns what, and claims of fact a character made about the world, the past or other people (kind "said": "Mara said the well froze last winter"). One short sentence each, with exact numbers and names, attributed. Not quotes of banter, questions, insults, jokes, threats of the moment, moods, or what someone did this turn. replaces: the #number of an Established detail this one updates or corrects (a new price, a moved deadline, a changed deal); never duplicate one that still holds. Most passages have 0-2.
@@ -117,9 +117,32 @@ function uniqueId(store: WorldStore, kind: string, name: string, taken: Set<stri
   return id;
 }
 
+/** Models often write "you", a bare slug or a name where an id belongs; map those to the real ids. */
+function normalizeIds(store: WorldStore, playerId: string, r: SyncResult, near: Entity[]): SyncResult {
+  const id = (raw: string | null): string | null => {
+    if (raw === null) return null;
+    const t = raw.trim().replace(/^\[|\]$/g, "");
+    if (/^new:/i.test(t) || store.getEntity(t)) return t;
+    if (/^(?:you|player|protagonist|character:you|character:player)$/i.test(t)) return playerId;
+    const bare = t.replace(/^[a-z]+:/i, "");
+    for (const kind of ["character", "item", "room", "place", "container", "region"]) if (store.getEntity(`${kind}:${bare}`)) return `${kind}:${bare}`;
+    const k = key(t);
+    return near.find((e) => [e.name, ...e.aliases].some((n) => key(n) === k))?.id ?? t;
+  };
+  return {
+    ...r,
+    people: r.people.map((p) => ({ ...p, id: id(p.id) ?? p.id, room: id(p.room), holding: p.holding?.map((h) => id(h) ?? h) ?? null })),
+    coins: r.coins.map((c) => ({ ...c, id: id(c.id) ?? c.id })),
+    items: r.items.map((it) => ({ ...it, id: id(it.id) ?? it.id, where: id(it.where) ?? it.where })),
+    details: r.details.map((d) => ({ ...d, subjects: d.subjects.map((x) => id(x) ?? x) })),
+    earshot: r.earshot.map((e) => ({ ...e, a: id(e.a) ?? e.a, b: id(e.b) ?? e.b })),
+  };
+}
+
 /** Turns a sync report into validated ops; anything that doesn't fit the records is left out with a note. */
 export function syncOps(store: WorldStore, playerId: string, r: SyncResult, advanced: number, people: Entity[], places: Entity[], notes: string[] = []): OpInput[] {
   const ops: OpInput[] = [];
+  r = normalizeIds(store, playerId, r, [...people, ...places]);
   const known = new Map(people.map((c) => [c.id, c]));
   const taken = new Set<string>();
   const findItem = (name: string, near: string[]): string | null => {
@@ -142,8 +165,15 @@ export function syncOps(store: WorldStore, playerId: string, r: SyncResult, adva
     return id;
   };
   const locate = (name: string, from: Entity): string | null => {
-    const n = key(name);
+    name = name.split(/\s+(?:into|in|to|toward|towards|through|under|with|for)\s+/i)[0] ?? name;
+    let n = key(name.replace(/^(?:the|a|an)\s+/i, ""));
     if (!n) return null;
+    if (/^(?:out|outside|outdoors|away|off|elsewhere|somewhere|the night|the rain)$/.test(n)) {
+      const street = places.find((p) => p.id !== from.parent_id && /\b(?:street|road|square|yard|lane|outside)\b/i.test(p.name));
+      if (street) return street.id;
+      n = "outside";
+      name = "Outside";
+    }
     const hit = places.find((p) => [p.name, ...p.aliases].some((x) => key(x) === n)) ?? store.allEntities().find((e) => isLocation(e) && [e.name, ...e.aliases].some((x) => key(x) === n));
     if (hit) return hit.kind === "place" ? (store.children(hit.id).find((c) => c.kind === "room")?.id ?? hit.id) : hit.id;
     const here = from.parent_id ? store.getEntity(from.parent_id) : null;
