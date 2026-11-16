@@ -36,7 +36,8 @@ export function tauriPlatform(): Platform {
   return {
     files,
     async exportFile(name, data) {
-      const path = await save({ defaultPath: name, filters: [{ name: "Adventure save", extensions: ["db"] }] });
+      const ext = /\.(\w+)$/.exec(name)?.[1] ?? "db";
+      const path = await save({ defaultPath: name, filters: [{ name: ext === "mp3" ? "MP3 audio" : "Adventure save", extensions: [ext] }] });
       if (!path) return false;
       await writeFile(path, data);
       return true;

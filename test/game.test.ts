@@ -63,4 +63,20 @@ describe("game", () => {
   it("pins zero-data-retention routing on every request", () => {
     expect(LlmClient.requestBody({ model: "m", messages: [], maxTokens: 1 }).provider).toEqual({ zdr: true, data_collection: "deny" });
   });
+
+  it("turns reasoning off, and falls back to low effort where a model requires it", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetch = (_u: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      bodies.push(b);
+      const off = JSON.stringify(b.reasoning) === JSON.stringify({ enabled: false });
+      return Promise.resolve({ ok: !off, status: off ? 400 : 200, json: () => Promise.resolve(off ? { error: { code: 400, message: "Reasoning is mandatory for this endpoint and cannot be disabled." } } : { choices: [{ message: { content: "ok" } }] }) });
+    };
+    const meter = { status: () => ({ blocked: false }), record: () => undefined };
+    const c = new LlmClient({ apiKey: "k", meter: meter as never, fetch: fetch as never });
+    expect((await c.chat({ model: "needs-reasoning", messages: [], maxTokens: 1 })).text).toBe("ok");
+    expect(bodies.map((b) => b.reasoning)).toEqual([{ enabled: false }, { effort: "low" }]);
+    await c.chat({ model: "needs-reasoning", messages: [], maxTokens: 1 });
+    expect(bodies).toHaveLength(3);
+  });
 });

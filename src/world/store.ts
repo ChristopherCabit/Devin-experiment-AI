@@ -26,6 +26,8 @@ interface FactRow {
   text: string;
   subjects: string;
   turn: number;
+  kind: string;
+  replaced_by: number | null;
 }
 
 const SCHEMA = `
@@ -64,8 +66,15 @@ CREATE TABLE IF NOT EXISTS turns (
 `;
 
 /** Save-format version. To change the format, append a migration; never edit an existing one. Migrations only add. */
-export const SCHEMA_VERSION = 1;
-const MIGRATIONS: ((db: Db) => void)[] = [(db) => db.exec(SCHEMA)];
+export const SCHEMA_VERSION = 2;
+const MIGRATIONS: ((db: Db) => void)[] = [
+  (db) => db.exec(SCHEMA),
+  (db) => {
+    const have = new Set((db.prepare("PRAGMA table_info(facts)").all() as { name: string }[]).map((c) => c.name));
+    if (!have.has("kind")) db.exec("ALTER TABLE facts ADD COLUMN kind TEXT NOT NULL DEFAULT 'fact'");
+    if (!have.has("replaced_by")) db.exec("ALTER TABLE facts ADD COLUMN replaced_by INTEGER");
+  },
+];
 
 function rowToEntity(row: EntityRow): Entity {
   return Entity.parse({
@@ -159,16 +168,32 @@ export class WorldStore {
     return rows.map(rowToEntity);
   }
 
-  addFact(text: string, subjects: string[], turn: number): number {
+  addFact(text: string, subjects: string[], turn: number, kind = "fact"): number {
     const { next } = this.stmt("SELECT coalesce(max(id), 0) + 1 AS next FROM facts").get() as unknown as { next: number };
     this.touch("facts", String(next));
-    this.stmt("INSERT INTO facts (id, text, subjects, turn) VALUES (?, ?, ?, ?)").run(
-      next,
-      text,
-      JSON.stringify(subjects),
-      turn,
-    );
+    this.stmt("INSERT INTO facts (id, text, subjects, turn, kind) VALUES (?, ?, ?, ?, ?)").run(next, text, JSON.stringify(subjects), turn, kind);
     return next;
+  }
+
+  /** Marks a fact as superseded by a newer one; it stays in the save but stops counting as true. */
+  replaceFact(id: number, by: number): void {
+    this.touch("facts", String(id));
+    this.stmt("UPDATE facts SET replaced_by = ? WHERE id = ?").run(by, id);
+  }
+
+  /** Facts still true: not replaced by a later one. */
+  activeFacts(): Fact[] {
+    return this.facts().filter((f) => f.replaced_by === null);
+  }
+
+  setFactSubjects(id: number, subjects: string[]): void {
+    this.touch("facts", String(id));
+    this.stmt("UPDATE facts SET subjects = ? WHERE id = ?").run(JSON.stringify(subjects), id);
+  }
+
+  deleteFact(id: number): void {
+    this.touch("facts", String(id));
+    this.stmt("DELETE FROM facts WHERE id = ?").run(id);
   }
 
   facts(): Fact[] {
@@ -238,7 +263,7 @@ export class WorldStore {
         return;
       case "facts":
         if (row === null) this.stmt("DELETE FROM facts WHERE id = ?").run(Number(key));
-        else this.stmt("INSERT OR REPLACE INTO facts (id, text, subjects, turn) VALUES (@id, @text, @subjects, @turn)").run(row);
+        else this.stmt("INSERT OR REPLACE INTO facts (id, text, subjects, turn, kind, replaced_by) VALUES (@id, @text, @subjects, @turn, @kind, @replaced_by)").run(row);
         return;
       case "meta":
         if (row === null) this.stmt("DELETE FROM meta WHERE key = ?").run(key);

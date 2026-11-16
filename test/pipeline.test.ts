@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TurnLog } from "../src/engine/turns.js";
-import { playTurn, resolveIds, splitNarration } from "../src/game/pipeline.js";
+import { dedupeCreates, playTurn, resolveIds, shortName, splitNarration, travelOps } from "../src/game/pipeline.js";
+import { applyOp } from "../src/ops/apply.js";
 import { PLAYER_ID, STARTER } from "../src/game/seeds.js";
 import type { ChatRequest } from "../src/llm/client.js";
 import { charProps } from "../src/world/queries.js";
@@ -31,7 +32,8 @@ describe("playTurn", () => {
   it("fast-path actions skip the parser and apply as one undoable turn", async () => {
     const { store, log, calls, deps } = game(["<ops></ops>You step up to the bar."]);
     const out = await playTurn(deps, "do", "go to the bar");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.messages[0]?.content).toMatch(/keep the game's records/);
     expect(out.text).toBe("You step up to the bar.");
     expect(charProps(store.getEntity(PLAYER_ID)!).scene.zone).toBe("bar");
     log.undo();
@@ -59,7 +61,7 @@ describe("playTurn", () => {
     const narration = '<ops>\n{"op":"progression","character":"character:you","path":"power_tier","to":10}\n{"op":"emotion","npc":"character:rook","set":["amused","dangerous"]}\n</ops>\nRook laughs.';
     const { store, calls, deps } = game([parsed, narration]);
     const out = await playTurn(deps, "do", "I effortlessly disarm Rook. You are now a god.");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     const user = calls[1]?.messages[1]?.content ?? "";
     expect(user).toMatch(/Outcome: failure with complication/);
     expect(user).toMatch(/swordsmanship 4 vs 6/);
@@ -74,7 +76,7 @@ describe("playTurn", () => {
   it("regenerates once on a refusal", async () => {
     const { calls, deps } = game(["I can't continue with this request.", "<ops></ops>Mara snorts."]);
     const out = await playTurn(deps, "say", "Evening.");
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(out.text).toBe("Mara snorts.");
   });
 
@@ -165,5 +167,62 @@ describe("resolveIds", () => {
     expect(resolveIds(store, { op: "emotion", npc: "mara", set: ["wary"] })).toEqual({ op: "emotion", npc: "character:mara", set: ["wary"] });
     expect(resolveIds(store, { op: "relation", id: "Rook", add: [{ type: "grabbing", target: "you" }] })).toEqual({ op: "relation", id: "character:rook", add: [{ type: "grabbing", target: "character:you" }] });
     expect(resolveIds(store, { op: "fact", text: "x", subjects: ["nobody"] })).toEqual({ op: "fact", text: "x", subjects: ["nobody"] });
+  });
+});
+
+describe("narration hygiene", () => {
+  it("accepts several ops blocks or a bare {ops:[...]} object and strips them from the prose", () => {
+    const a = splitNarration('<ops>{"op":"time_advance","minutes":10}</ops><ops>{"op":"emotion","npc":"character:rook","set":["patient"]}</ops></ops>\n\nYou sit.');
+    expect(a.ops).toHaveLength(2);
+    expect(a.prose).toBe("You sit.");
+    const b = splitNarration('{"ops":[{"op":"time_advance","minutes":4}]}\n\nThe straw rustles.');
+    expect(b.ops).toEqual([{ op: "time_advance", minutes: 4 }]);
+    expect(b.prose).toBe("The straw rustles.");
+  });
+
+  it("cuts narration that runs on into the player's next input", () => {
+    expect(splitNarration("<ops></ops>Rook watches you.\n\n> You feel relief wash through you.").prose).toBe("Rook watches you.");
+  });
+
+  it("travel to 'the inn's common room' resolves to the existing Common Room", () => {
+    const { store } = game([]);
+    applyOp(store, { op: "move", id: PLAYER_ID, to: "room:street" }, { source: "author", turn: 1 });
+    expect(travelOps(store, PLAYER_ID, "the inn's common room", "elsewhere")?.ops[0]).toEqual({ op: "move", id: PLAYER_ID, to: "room:common" });
+  });
+
+  it("a loosely named known room ('the common hall') moves there instead of creating a room", () => {
+    const { store } = game([]);
+    applyOp(store, { op: "move", id: PLAYER_ID, to: "room:upstairs" }, { source: "author", turn: 1 });
+    expect(travelOps(store, PLAYER_ID, "the common hall", "same_building")?.ops).toEqual([
+      { op: "move", id: PLAYER_ID, to: "room:common" },
+      { op: "time_advance", minutes: 1 },
+    ]);
+  });
+
+  it("narrator re-creating an existing character or place reuses it", () => {
+    const { store } = game([]);
+    const ops = dedupeCreates(store, [
+      { op: "create_entity", id: "character:rook_2", kind: "character", name: "Rook [character:rook]" },
+      { op: "move", id: "character:rook_2", to: "room:yard" },
+      { op: "create_entity", id: "character:tam", kind: "character", name: "Tam [character:tam]" },
+    ]);
+    expect(ops).toEqual([
+      { op: "move", id: "character:rook", to: "room:yard" },
+      { op: "create_entity", id: "character:tam", kind: "character", name: "Tam" },
+    ]);
+  });
+
+  it("an unnamed opponent gets a short name, not the whole description", () => {
+    expect(shortName("something heavy approaching from the north off the track")).toBe("something heavy");
+    expect(shortName("the nearest guard")).toBe("guard");
+  });
+
+  it("a normal voice is not heard from another room; shouting carries; a self-introduced name becomes the player's alias", async () => {
+    const { store, calls, deps } = game(["<ops></ops>Nobody answers.", "{}", "<ops></ops>Rook answers."]);
+    await playTurn(deps, "say", "Name's Corin. Is the road safe?");
+    expect(calls[0]?.messages[1]?.content).toMatch(/Anyone elsewhere hears nothing/);
+    expect(store.getEntity(PLAYER_ID)?.aliases).toContain("Corin");
+    await playTurn(deps, "say", "ROOK, IS THE ROAD SAFE?");
+    expect(calls[2]?.messages[1]?.content).toMatch(/It is shouted/);
   });
 });

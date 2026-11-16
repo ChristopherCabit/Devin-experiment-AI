@@ -102,6 +102,56 @@ export class TurnLog {
     }
   }
 
+  /**
+   * Applies follow-up ops (e.g. the state sync after a passage) as part of the latest turn,
+   * so one undo still restores everything. Does nothing if turn `n` is no longer the latest.
+   */
+  amend(n: number, batches: readonly { source: OpSource; ops: readonly unknown[] }[], output?: string, mark = false): OpResult[] {
+    const row = this.store.db.prepare("SELECT * FROM turns WHERE n = ?").get(n) as unknown as TurnRow | undefined;
+    if (!row || n !== this.lastTurn()) return [];
+    const rec = rowToRecord(row);
+    if (mark) this.store.setMeta("amend_mark", { n, at: rec.created_at, ops: rec.ops.length, results: rec.results.length, changes: rec.changes.length });
+    this.store.beginCapture();
+    try {
+      return this.store.transaction(() => {
+        const results = batches.flatMap((b) => applyOps(this.store, b.ops, { source: b.source, turn: n }));
+        const changes = this.store.endCapture();
+        const summary = results.map((r) =>
+          r.ok ? { op: r.op.op, ok: true, ...(r.note ? { note: r.note } : {}) } : { op: opName(r.op), ok: false, reason: r.reason },
+        );
+        this.store.db
+          .prepare("UPDATE turns SET ops = ?, results = ?, changes = ?, output = ? WHERE n = ?")
+          .run(
+            JSON.stringify([...rec.ops, ...batches.flatMap((b) => b.ops)]),
+            JSON.stringify([...rec.results, ...summary]),
+            JSON.stringify([...rec.changes, ...changes]),
+            output ?? rec.output,
+            n,
+          );
+        return results;
+      });
+    } finally {
+      this.store.abortCapture();
+    }
+  }
+
+  /** Takes back the marked amendment of turn `n` (its state sync) so it can be redone; false if there is none. */
+  unamend(n: number): boolean {
+    const m = this.store.getMeta<{ n: number; at: number; ops: number; results: number; changes: number } | null>("amend_mark", null);
+    const row = this.store.db.prepare("SELECT * FROM turns WHERE n = ?").get(n) as unknown as TurnRow | undefined;
+    if (!m || !row || m.n !== n || n !== this.lastTurn()) return false;
+    const rec = rowToRecord(row);
+    if (m.at !== rec.created_at || rec.changes.length < m.changes) return false;
+    this.store.transaction(() => {
+      this.store.revert(rec.changes.slice(m.changes));
+      this.store.db
+        .prepare("UPDATE turns SET ops = ?, results = ?, changes = ? WHERE n = ?")
+        .run(JSON.stringify(rec.ops.slice(0, m.ops)), JSON.stringify(rec.results.slice(0, m.results)), JSON.stringify(rec.changes.slice(0, m.changes)), n);
+      this.store.setMeta("amend_mark", null);
+    });
+    return true;
+  }
+
   /** Reverts and removes the latest turn. Returns it, or null if the log is empty. */
   undo(): TurnRecord | null {
     return this.store.transaction(() => {

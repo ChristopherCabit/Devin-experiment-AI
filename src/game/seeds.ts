@@ -18,6 +18,7 @@ export const STARTER: Seed = {
   opening:
     "Rain drums on the shutters of the Lantern Inn. The common room smells of woodsmoke and wet wool. Behind the bar, Mara wipes the same mug for the third time, watching you over its rim. In the corner, a scarred mercenary nurses a drink and doesn't bother hiding that he's sizing you up.",
   ops: [
+    { op: "time_advance", minutes: 19 * 60 },
     { op: "create_entity", id: "region:marrow", kind: "region", name: "Marrowfield" },
     { op: "create_entity", id: "place:inn", kind: "place", name: "Lantern Inn", parent: "region:marrow" },
     {

@@ -27,7 +27,7 @@ const KEEP_BACKUPS = 5;
 /** Tables and columns copied out of an imported file; nothing else in it is ever read. */
 const COLUMNS: Record<string, readonly string[]> = {
   entities: ["id", "kind", "name", "aliases", "parent_id", "props", "created_turn"],
-  facts: ["id", "text", "subjects", "turn"],
+  facts: ["id", "text", "subjects", "turn", "kind", "replaced_by"],
   meta: ["key", "value"],
   turns: ["n", "kind", "source", "input", "ops", "results", "changes", "output", "created_at"],
 };
@@ -145,11 +145,11 @@ export class SaveManager {
     return dest;
   }
 
-  async create(name: string): Promise<string> {
+  async create(name: string, seed: (store: WorldStore, log: TurnLog) => void = this.seed): Promise<string> {
     const id = newId();
     const store = new WorldStore();
     try {
-      this.seed(store, new TurnLog(store));
+      seed(store, new TurnLog(store));
       await this.files.write(this.file(id), store.serialize());
     } finally {
       store.close();
