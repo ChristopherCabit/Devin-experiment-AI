@@ -13,6 +13,7 @@ import { namedIn } from "./pipeline.js";
  */
 export const CHECK_PROMPT = `You proofread a story passage for continuity against the game's records and the story before it. The passage is second person: the protagonist is "you".
 List only statements in the PASSAGE that clearly contradict the records or the earlier story: amounts of money, prices, wages, debts, counts, who owns or holds what, where someone is, who is present or could hear, who said what earlier, times and deadlines, names, what a character could know, and any narration of the protagonist in the third person. Not style, not taste, and not new things the passage establishes that fit everything known. The passage describes what happens this turn, so changes it shows happening (a payment, someone leaving) are not contradictions; a wrong starting amount or a wrong total is.
+The records can lag behind the story: where the earlier story clearly shows something newer than the records, the story is right. Leave out anything you are not sure is a contradiction, and anything the passage simply adds. At most 3 fixes; if the whole passage rests on a different premise, list only the plainest one.
 For each, copy the exact text to replace character for character (as short as possible while unique in the passage) and give a replacement that fits the records and keeps the sentence working.
 Output JSON: {"fixes":[{"quote":str,"replacement":str,"why":str}]}. {"fixes":[]} when nothing contradicts.`;
 
@@ -83,7 +84,10 @@ export async function checkPassage(
   } catch {
     return { text: prose, applied: [], skipped: [], cost: res.costUsd };
   }
-  return { ...applyFixes(prose, fixes), cost: res.costUsd };
+  const hedged = /\b(?:no clear contradiction|not a (?:clear )?contradiction|rather than a (?:clear )?contradiction|no record contradicts)\b/i;
+  const keep = fixes.filter((f) => f.quote.length <= (thorough ? 300 : 160) && !hedged.test(f.why)).slice(0, thorough ? 5 : 3);
+  const out = applyFixes(prose, keep);
+  return { ...out, skipped: [...out.skipped, ...fixes.filter((f) => !keep.includes(f))], cost: res.costUsd };
 }
 
 export interface Settled {
