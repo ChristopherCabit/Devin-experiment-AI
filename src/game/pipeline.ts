@@ -4,7 +4,7 @@ import type { ChatMessage, ChatRequest, ChatResult } from "../llm/client.js";
 import type { OpInput } from "../ops/schema.js";
 import { applyOps } from "../ops/apply.js";
 import { fastPath, normalizeName, RESTRAINT } from "../parser/fastpath.js";
-import { ancestors, charProps, slugify } from "../world/queries.js";
+import { ancestors, charProps, roomProps, slugify } from "../world/queries.js";
 import type { WorldStore } from "../world/store.js";
 import type { Entity } from "../world/types.js";
 import { appointmentAt, approxTokens, clockAt, describeScene, getSettings, scheduleLines, storyWindow, type WorldSettings } from "./context.js";
@@ -479,6 +479,16 @@ export function travelOps(
     if (found.kind === "place") to = store.children(found.id).find((c) => c.kind === "room") ?? found;
     if (to.id === here.id || ancestors(store, here.id).some((a) => a.id === to.id && to.kind === "room")) return null;
     return { name: to.name, ops: [{ op: "move", id: playerId, to: to.id }, { op: "time_advance", minutes }] };
+  }
+  // "the bar" is usually a spot in this room (or a nearby one), not a room of its own.
+  const spot = keyWords(destination).join(" ");
+  const zoneIn = (r: Entity) => (spot ? roomProps(r).zones.find((z) => keyWords(z).join(" ") === spot) : undefined);
+  const nearRooms = [here, ...(building ? store.entitiesOfKind("room").filter((r) => r.id !== here.id && ancestors(store, r.id).some((a) => a.id === building.id)) : [])];
+  for (const r of nearRooms) {
+    const z = zoneIn(r);
+    if (!z) continue;
+    if (r.id === here.id) return charProps(player).scene.zone === z ? null : { name: `${r.name} (${z})`, ops: [{ op: "set_zone", id: playerId, zone: z }, { op: "time_advance", minutes: 1 }] };
+    return { name: `${r.name} (${z})`, ops: [{ op: "move", id: playerId, to: r.id, zone: z }, { op: "time_advance", minutes }] };
   }
   // "the longhouse door" or "the yard barrel" is a spot in a known room, not a new room.
   const want = new Set(keyWords(destination));
@@ -1231,7 +1241,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     costUsd += res.costUsd;
     raw = res.text;
     const draft = splitNarration(raw).prose;
-    const blank = !draft || /^[a-z_]+$/.test(draft) || (PSEUDO_TAG.test(raw) && draft.length < 40);
+    const blank = !draft || /^[a-z_]+$/.test(draft) || (PSEUDO_TAG.test(raw) && draft.length < 40) || (draft.length < 200 && /<\/?[a-z_]+/i.test(draft));
     const voiced = kind !== "say" && !SPOKE.test(input) && PLAYER_LINE.test(draft);
     if (!blank && !voiced && !REFUSAL.test(draft) && (settings.asides || !ASIDE.test(draft))) break;
     messages.push(

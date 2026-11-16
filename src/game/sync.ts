@@ -23,7 +23,7 @@ export const SYNC_PROMPT = `You keep a story game's records in line with what th
 - people: everyone in the records whose room, spot (zone), posture or what they hold in their hands is now different. room: a Place id when they end up in a known place. left_for: when they leave for somewhere not listed, a short name for it ("the forge", "upstairs"); room null then. holding: the full list of what is in their hands at the end (at most 2), [] for empty hands. Use null for anything unchanged. Never invent movement the passage doesn't show.
 - coins: money that changed hands in the passage. now: the purse total when the passage makes it clear; otherwise change (+ received, - paid). Coins are counted in the smallest coin the records use. Only for people whose Coin is listed.
 - items: a thing put down, moved, left behind or newly shown in a specific place that matters (not scenery). where: a Place or person id.
-- details: concrete specifics a later scene must not contradict that are not already in Established details: prices, wages, debts, deadlines and times agreed, deals and promises, who owns what, and notable claims or statements a character made (kind "said": "Mara said the well froze last winter"). One short sentence each, with exact numbers and names, attributed. replaces: the #number of an Established detail this one updates or corrects (a new price, a moved deadline, a changed deal); never duplicate one that still holds. Not moods, feelings, or anything momentary. Usually 0-3.
+- details: concrete specifics a later scene must not contradict that are not already in Established details: prices, wages, debts, deadlines and times agreed, deals and promises, who owns what, and claims of fact a character made about the world, the past or other people (kind "said": "Mara said the well froze last winter"). One short sentence each, with exact numbers and names, attributed. Not quotes of banter, questions, insults, jokes, threats of the moment, moods, or what someone did this turn. replaces: the #number of an Established detail this one updates or corrects (a new price, a moved deadline, a changed deal); never duplicate one that still holds. Most passages have 0-2.
 - earshot: only when the passage shows whether ordinary speech carries between two listed rooms (a door left open, an arch, a thin wall: open true; a door shut: open false).
 Empty arrays when nothing applies.`;
 
@@ -215,7 +215,8 @@ export function syncOps(store: WorldStore, playerId: string, r: SyncResult, adva
     seen.add(key(d.text));
     const replaces = d.replaces && active.some((f) => f.id === d.replaces) && !replaced.has(d.replaces) ? d.replaces : undefined;
     if (replaces) replaced.add(replaces);
-    ops.push({ op: "fact", text: d.text, kind: d.kind, subjects: [...new Set(d.subjects.filter((x) => store.getEntity(x)))], ...(replaces ? { replaces } : {}) });
+    const mentioned = [...people, ...places].filter((e) => [e.name, ...e.aliases].some((n) => n.trim().length > 2 && new RegExp(`\\b${n.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(d.text))).map((e) => e.id);
+    ops.push({ op: "fact", text: d.text, kind: d.kind, subjects: [...new Set([...d.subjects.filter((x) => store.getEntity(x)), ...mentioned])].slice(0, 6), ...(replaces ? { replaces } : {}) });
   }
 
   for (const e of r.earshot) {
