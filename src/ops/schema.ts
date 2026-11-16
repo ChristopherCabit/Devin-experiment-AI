@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+export const FACT_KINDS = ["price", "wage", "deadline", "agreement", "ownership", "said", "fact"] as const;
 import { EntityId, EntityKind, Hand, REACHES, Relation, SECRET_KINDS, THREAD_STATUS, THREAD_URGENCY, Tier, URGENCIES } from "../world/types.js";
 
 const Name = z.string().trim().min(1).max(80);
@@ -137,7 +139,17 @@ export const Op = z.discriminatedUnion("op", [
   z.object({ op: z.literal("opinion"), id: EntityId, topic: z.string().trim().min(1).max(80), view: z.string().trim().min(1).max(200), why: z.string().trim().max(200).optional() }).strict(),
   z.object({ op: z.literal("forget_thought"), npc: EntityId, key: z.string().min(1) }).strict(),
   z.object({ op: z.literal("relationship_note"), npc: EntityId, target: EntityId, text: Text }).strict(),
-  z.object({ op: z.literal("fact"), text: Text, subjects: z.array(EntityId).default([]) }).strict(),
+  z
+    .object({
+      op: z.literal("fact"),
+      text: Text,
+      subjects: z.array(EntityId).default([]),
+      kind: z.enum(FACT_KINDS).default("fact"),
+      /** An earlier fact this one corrects or updates (a new price, a changed deadline). */
+      replaces: z.number().int().positive().optional(),
+    })
+    .strict(),
+  z.object({ op: z.literal("earshot"), a: EntityId, b: EntityId, open: z.boolean() }).strict(),
   z.object({ op: z.literal("time_advance"), minutes: z.number().int().positive() }).strict(),
   z
     .object({ op: z.literal("resource_delta"), character: EntityId, resource: Name, delta: z.number() })
@@ -160,7 +172,7 @@ export type OpName = Op["op"];
 export const AUTHOR_ONLY_OPS: ReadonlySet<OpName> = new Set(["author_update"]);
 
 /** Ops the narrator may never emit: they come only from code-resolved outcomes. */
-export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression", "practice", "remove_entity", "secret", "hint", "secret_urgency", "world_event", "life_event", "life_tick"]);
+export const ENGINE_ONLY_OPS: ReadonlySet<OpName> = new Set(["resource_delta", "progression", "practice", "remove_entity", "secret", "hint", "secret_urgency", "world_event", "life_event", "life_tick", "earshot"]);
 
 export const OpSource = z.enum(["narrator", "engine", "author"]);
 export type OpSource = z.infer<typeof OpSource>;

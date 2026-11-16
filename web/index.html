@@ -231,6 +231,11 @@
       <label><input id="s-memorySurfacing" type="checkbox"> Memories come up on their own, by meaning, even partway through a passage (a fraction of a cent per turn)</label>
       <label>Parser / record-keeper model <input id="s-parserModel" list="models-parser"></label>
       <label>Memory-matching model (finds memories by meaning; zero-retention) <input id="s-embedModel"></label>
+      <label><input id="s-stateSync" type="checkbox"> Keep the records in line with each passage (where people are, what they hold, coin, time, details said in passing)</label>
+      <label>Record-keeping model for that <input id="s-syncModel" list="models-parser"></label>
+      <label><input id="s-checkButton" type="checkbox"> Show a "Check &amp; fix" button for the latest passage</label>
+      <label><input id="s-checkAuto" type="checkbox"> Check and fix every passage automatically</label>
+      <label><input id="s-checkThorough" type="checkbox"> Thorough check (stronger model, reads more of the story; several times the cost)</label>
       <datalist id="models-parser">
         <option value="deepseek/deepseek-v4.1-flash-1017">DeepSeek V4.1 Flash: recommended</option>
         <option value="deepseek/deepseek-v4-pro-0813">DeepSeek V4 Pro</option>

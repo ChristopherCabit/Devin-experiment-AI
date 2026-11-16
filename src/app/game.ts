@@ -50,6 +50,11 @@ const SettingsBody = z
     deathPolicy: z.enum(DEATH_POLICIES),
     narratorModel: z.string().min(1).max(120),
     parserModel: z.string().min(1).max(120),
+    stateSync: z.boolean(),
+    syncModel: z.string().min(1).max(120),
+    checkButton: z.boolean(),
+    checkAuto: z.boolean(),
+    checkThorough: z.boolean(),
     embedModel: z.string().min(1).max(120),
     narratorReasoning: z.enum(["off", "low", "default"]),
     memoryLookups: z.enum(["off", "auto", "always"]),
@@ -196,12 +201,16 @@ export class Game {
   }
 
   // --- play ---
-  private play(run: () => Promise<TurnOutput>): Promise<TurnOutput & { state: GameState }> {
+  private play(run: () => Promise<TurnOutput>): Promise<TurnOutput & { state: GameState; synced: Promise<void> }> {
     if (this.meter.status().blocked) return Promise.reject(new SpendCapError());
-    return this.serial(async () => ({ ...(await run()), state: this.state() }));
+    return this.serial(async () => {
+      const { settle, ...out } = await run();
+      const synced = settle ? this.serial(() => settle().then(() => undefined)).catch(() => undefined) : Promise.resolve();
+      return { ...out, state: this.state(), synced };
+    });
   }
 
-  turn(kind: PlayKind, input: string, onText?: (prose: string) => void): Promise<TurnOutput & { state: GameState }> {
+  turn(kind: PlayKind, input: string, onText?: (prose: string) => void): Promise<TurnOutput & { state: GameState; synced: Promise<void> }> {
     const b = parse(TurnBody, { kind, input });
     return this.play(() => {
       const llm = this.llm();
@@ -256,7 +265,7 @@ export class Game {
     });
   }
 
-  retry(): Promise<TurnOutput & { state: GameState }> {
+  retry(): Promise<TurnOutput & { state: GameState; synced: Promise<void> }> {
     const last = this.W.log.history(1)[0];
     if (!this.undoAllowed()) return Promise.reject(new GameError("retry disabled (ironman)"));
     if (!last || !["do", "say", "story", "continue"].includes(last.kind)) return Promise.reject(new GameError("nothing to retry"));

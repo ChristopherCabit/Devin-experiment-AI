@@ -14,6 +14,7 @@ import { phrasingNote } from "./phrasing.js";
 import DEFAULT_SAMPLE from "./styles/default.md?raw";
 import { candidates, EMBED_DIMS, indexTurns, markRecalled, memoryText, normalize, primeMemories, queryText, stirredBy, type Candidate, type Embed, type RecallContext } from "./association.js";
 import { narrate, type Watch } from "./narrate.js";
+import { syncState } from "./sync.js";
 import { DIFFICULTIES, resolveCheck, type Outcome } from "./dice.js";
 import { castCharacter, castToSheet, consumeOps, cultivateOps, effectiveTier, isRated, practiceOps, STAT_SCALE, trainOps } from "./rules.js";
 import { generateSecret, hintText, PACES, selectHint, spawnSubject, type Pace } from "./secrets.js";
@@ -39,6 +40,8 @@ export interface TurnOutput {
   interpreted: string | null;
   rejected: string[];
   costUsd: number;
+  /** Brings the records in line with the passage (state sync); run it before the next turn. Returns its cost. */
+  settle?: () => Promise<number>;
 }
 
 const Parsed = z.object({
@@ -279,6 +282,7 @@ export function visibleProse(raw: string): string {
     .replace(/```[\s\S]*$/, "")
     .replace(/<(tool_call|parameter)\b[\s\S]*?<\/\1>/gi, "")
     .replace(/<(?:tool_call|parameter|arg_key|arg_value)\b[\s\S]*$/i, "")
+    .replace(/<[^<>\n]{0,40}\bomitted\b[^<>\n]{0,20}>/gi, "")
     .replace(/<[a-z/]*$/i, "")
     .replace(/(?:^|\n)\s*[[{][^\n]*$/, "");
   return splitNarration(s).prose.split(/\n\s*>/)[0]?.trim() ?? "";
@@ -412,6 +416,14 @@ export function dedupeCreates(store: WorldStore, ops: unknown[]): unknown[] {
       const name = o.name.replace(/\s*\[[^\]]*\]/g, "").trim() || o.name;
       o.name = name;
       const kind = o.kind;
+      if ((kind === "item" || kind === "container") && typeof o.parent === "string") {
+        const k = nameKey(name);
+        const same = store.children(o.parent).find((e) => e.kind === kind && [e.name, ...e.aliases].some((n) => nameKey(n) === k));
+        if (same) {
+          if (typeof o.id === "string") remap.set(o.id, same.id);
+          continue;
+        }
+      }
       if (kind === "character" || kind === "place" || kind === "room") {
         const k = nameKey(name);
         const same = store
@@ -901,7 +913,7 @@ async function reviewProse(deps: GameDeps, s: WorldSettings, said: string, prose
   for (const [id, appearance] of looks) ops.push({ op: "update_character", id, appearance });
   const seen = new Set(store.facts().map((f) => f.text.toLowerCase()));
   const exists = (x: string) => store.getEntity(x) !== null;
-  for (const f of r.facts) if (!seen.has(f.text.toLowerCase())) ops.push({ op: "fact", text: f.text, subjects: f.subjects.filter(exists) });
+  if (!s.stateSync) for (const f of r.facts) if (!seen.has(f.text.toLowerCase())) ops.push({ op: "fact", text: f.text, subjects: f.subjects.filter(exists) });
   return res.costUsd;
 }
 
@@ -1043,7 +1055,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
     const loud = /!\s*$|\b(?:shouts?|yells?|bellows?|calls? (?:out|down|up))\b/i.test(input) || (input.length > 8 && input === input.toUpperCase());
     result =
       `The protagonist says: "${input.replace(/"/g, "'")}". Others respond from their own minds.` +
-      (loud ? " It is shouted; it carries to adjacent rooms." : " Spoken in a normal voice: only characters present in this room can hear it. Anyone elsewhere hears nothing and cannot answer unless the protagonist shouts or goes to them. Show the silence; don't explain why.");
+      (loud ? " It is shouted; it carries to adjacent rooms." : " Spoken in a normal voice: only characters present in this room, or listed as within earshot through an open doorway, can hear it. Anyone elsewhere hears nothing and cannot answer unless the protagonist shouts or goes to them. Show the silence; don't explain why.");
   } else if (kind === "story") {
     result = "The player suggested where the story might go (non-binding; incorporate only what is consistent with state and characters' minds).";
   } else {
@@ -1079,7 +1091,7 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   let refs = "";
   try {
     applyOps(store, engineOps, { source: "engine", turn: log.lastTurn() + 1 });
-    preview = describeScene(store, playerId);
+    preview = describeScene(store, playerId, namedIn(store, `${input}\n${(log.history(1)[0]?.output ?? "").slice(-3000)}`).map((c) => c.id));
     if (settings.research) refs = referenceText(store, `${input}\n${storyWindow(log, 800).text}`);
   } finally {
     store.revert(store.endCapture());
@@ -1273,7 +1285,17 @@ export async function playTurn(deps: GameDeps, kind: PlayKind, rawInput: string)
   if (found.length && references(store).length < settings.researchMax)
     lookups.set(store, { turn, p: Promise.all(found.map((l) => lookUp(llm, settings.parserModel, l).catch(() => ({ ops: [], cost: 0 })))).then((rs) => ({ ops: rs.flatMap((x) => x.ops), cost: rs.reduce((n, x) => n + x.cost, 0) })) });
   if (lifeDue(store, settings)) periods.set(store, { turn, p: simulatePeriod(store, llm, settings, playerId, story.slice(-4000), rng).catch(() => ({ ops: [], cost: 0 })) });
-  return { turn, text: prose, interpreted, rejected, costUsd };
+  const advanced = waitLanded
+    ? Infinity
+    : [...engineOps, ...(narratorOps as OpInput[])].reduce((n, o) => n + (o.op === "time_advance" ? Number((o as { minutes?: number }).minutes ?? 0) : 0), 0);
+  const settle = settings.stateSync
+    ? async () => {
+        const r = await syncState(llm, store, playerId, settings, said, prose, advanced, namedIn(store, prose).filter((c) => c.id !== playerId));
+        if (r.ops.length) log.amend(turn, [{ source: "engine", ops: r.ops }]);
+        return r.cost;
+      }
+    : undefined;
+  return { turn, text: prose, interpreted, rejected, costUsd, ...(settle ? { settle } : {}) };
 }
 
 async function parseIntent(deps: GameDeps, s: WorldSettings, input: string): Promise<{ value: Parsed; cost: number }> {

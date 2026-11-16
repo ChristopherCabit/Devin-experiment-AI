@@ -58,6 +58,7 @@ describe("prose review", () => {
   it("records facts and lasting profile details from the passage in the same undoable turn", async () => {
     const { store, log } = world();
     const review = JSON.stringify({ characters: [], details: [{ id: "character:rook", add: "a scar through his left eyebrow" }], facts: [{ text: "Rook left a guitar in your room as a gift.", subjects: ["character:rook", "character:nobody"] }] });
+    store.setMeta("settings", { stateSync: false });
     const replies = ["<ops></ops>Rook touches the scar through his eyebrow. \"Left you a guitar,\" he says.", review];
     const llm = { chat: () => Promise.resolve({ text: replies.shift() ?? "{}", promptTokens: 0, completionTokens: 0, costUsd: 0 }) };
     const { playTurn } = await import("../src/game/pipeline.js");

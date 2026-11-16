@@ -60,8 +60,9 @@ function cueMusic(text: string, force = false) {
     .catch(() => undefined);
 }
 
-function showTurn(out: TurnOutput & { state: GameState }) {
+function showTurn(out: TurnOutput & { state: GameState; synced?: Promise<void> }) {
   render(out.state);
+  void out.synced?.then(() => render(game.state()));
   cueMusic(out.text);
   loadEntities();
   $("interpreted").textContent = [out.interpreted ? `Interpreted as: ${out.interpreted}` : "", out.rejected.some((r) => !/engine|sheets are set/.test(r)) ? `Engine rejected: ${out.rejected.filter((r) => !/engine|sheets are set/.test(r)).join("; ")}` : ""]
@@ -281,8 +282,8 @@ $("btn-entity-add").onclick = async () => {
 };
 
 // ---------- world + app settings ----------
-const SETTINGS = ["title", "premise", "style", "era", "styleSampleOn", "styleSample", "intensity", "limits", "corrections", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "embedModel", "narratorReasoning", "memoryLookups", "memorySurfacing", "contextTokens", "recentTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
-const BOOLS = new Set<string>(["styleSampleOn", "memorySurfacing", "research", "music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
+const SETTINGS = ["title", "premise", "style", "era", "styleSampleOn", "styleSample", "intensity", "limits", "corrections", "deathPolicy", "powerCeiling", "thoughtsPerTurn", "length", "asides", "unboundedPower", "narratorModel", "parserModel", "stateSync", "syncModel", "checkButton", "checkAuto", "checkThorough", "embedModel", "narratorReasoning", "memoryLookups", "memorySurfacing", "contextTokens", "recentTokens", "threads", "threadsShown", "influence", "npcLives", "lifeEveryHours", "lifeTracked", "worldEvents", "worldEventDays", "connectedness", "research", "researchMax", "music", "musicStyle", "musicModel"] as const;
+const BOOLS = new Set<string>(["styleSampleOn", "stateSync", "checkButton", "checkAuto", "checkThorough", "memorySurfacing", "research", "music", "unboundedPower", "asides", "threads", "npcLives", "worldEvents"]);
 const NUMERIC = new Set<string>(["researchMax", "thoughtsPerTurn", "contextTokens", "recentTokens", "powerCeiling", "length", "threadsShown", "lifeEveryHours", "lifeTracked", "worldEventDays"]);
 const say = (m: string) => ($("world-msg").textContent = m);
 function loadSettings() {

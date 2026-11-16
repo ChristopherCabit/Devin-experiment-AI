@@ -91,6 +91,8 @@ export const RoomProps = z
     adjacent: z.array(z.tuple([z.string(), z.string()])).default([]),
     /** Room ids reachable directly from this room. Empty = not recorded. */
     exits: z.array(EntityId).default([]),
+    /** Rooms within earshot through an open doorway or arch: normal speech carries, muffled. */
+    open_to: z.array(EntityId).default([]),
   })
   .passthrough();
 export type RoomProps = z.infer<typeof RoomProps>;
@@ -132,6 +134,9 @@ export const Fact = z.object({
   text: z.string().min(1),
   subjects: z.array(EntityId).default([]),
   turn: z.number().int().nonnegative(),
+  /** price, wage, deadline, agreement, ownership, said, fact. */
+  kind: z.string().default("fact"),
+  replaced_by: z.number().int().nullable().default(null),
 });
 export type Fact = z.infer<typeof Fact>;
 

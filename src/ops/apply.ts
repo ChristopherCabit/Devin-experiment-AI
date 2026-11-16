@@ -594,8 +594,24 @@ function handle(store: WorldStore, op: Op, ctx: ApplyContext, limits: Limits): D
 
     case "fact": {
       for (const s of op.subjects) need(store, s);
-      const id = store.addFact(op.text, op.subjects, ctx.turn);
+      const old = op.replaces ? store.facts().find((f) => f.id === op.replaces && f.replaced_by === null) : undefined;
+      if (op.replaces && !old) fail(`no current fact #${op.replaces}`);
+      const id = store.addFact(op.text, op.subjects, ctx.turn, op.kind);
+      if (old) store.replaceFact(old.id, id);
       return { id: `fact:${id}` };
+    }
+    case "earshot": {
+      const a = need(store, op.a, ["room"]);
+      const b = need(store, op.b, ["room"]);
+      if (a.id === b.id) fail("a room is always within earshot of itself");
+      for (const [x, y] of [[a, b], [b, a]] as const) {
+        const rp = RoomProps.parse(x.props);
+        const open = new Set(rp.open_to);
+        if (op.open) open.add(y.id);
+        else open.delete(y.id);
+        store.putEntity({ ...x, props: { ...x.props, open_to: [...open] } });
+      }
+      return {};
     }
 
     case "time_advance": {

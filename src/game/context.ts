@@ -24,6 +24,16 @@ export interface WorldSettings {
   deathPolicy: DeathPolicy;
   narratorModel: string;
   parserModel: string;
+  /** After each passage, a dedicated call brings positions, hands, coin, time and established details in line with it. */
+  stateSync: boolean;
+  /** Model for the state sync; accuracy matters more than speed here. */
+  syncModel: string;
+  /** Show a "Check & fix" button that repairs sentences contradicting the records. */
+  checkButton: boolean;
+  /** Run the check on every passage automatically. */
+  checkAuto: boolean;
+  /** Thorough check: stronger model with reasoning and more of the story (costs several times more). */
+  checkThorough: boolean;
   /** Hidden reasoning for the narrator; models that require it fall back to low. */
   narratorReasoning: "off" | "low" | "default";
   /** Narrator looks up earlier passages before writing: never, when it decides to, or every turn. */
@@ -99,6 +109,11 @@ export const DEFAULT_SETTINGS: WorldSettings = {
   deathPolicy: "consequence",
   narratorModel: "z-ai/glm-5.3",
   parserModel: "deepseek/deepseek-v4.1-flash-1017",
+  stateSync: true,
+  syncModel: "deepseek/deepseek-v4-pro-0813",
+  checkButton: true,
+  checkAuto: false,
+  checkThorough: false,
   narratorReasoning: "off",
   memoryLookups: "auto",
   memorySurfacing: true,
@@ -244,7 +259,8 @@ function characterBlock(store: WorldStore, e: Entity, isPlayer: boolean): string
   return lines;
 }
 
-export function describeScene(store: WorldStore, playerId: string): { text: string; present: Entity[] } {
+/** `also`: ids named in the player's input or the last passage, whose established details should show too. */
+export function describeScene(store: WorldStore, playerId: string, also: readonly string[] = []): { text: string; present: Entity[] } {
   const player = store.getEntity(playerId);
   if (!player) throw new Error("no player");
   const here = player.parent_id ? store.getEntity(player.parent_id) : null;
@@ -259,7 +275,11 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
     if (rp.zones.length) lines.push(`Zones: ${rp.zones.join(", ")}`);
     const siblings = store.children(here.parent_id ?? "").filter((r) => r.kind === "room" && r.id !== here.id);
     if (siblings.length) lines.push(`Other rooms here: ${siblings.map((r) => `${r.name} [${r.id}]`).join(", ")}`);
-    const nearby = siblings.flatMap((r) => store.children(r.id).filter((c) => c.kind === "character").map((c) => `${c.name} [${c.id}] in ${r.name}`));
+    const earshot = new Set(rp.open_to);
+    const who = (rs: Entity[]) => rs.flatMap((r) => store.children(r.id).filter((c) => c.kind === "character").map((c) => `${c.name} [${c.id}] in ${r.name}`));
+    const heard = who(store.allEntities().filter((r) => earshot.has(r.id)));
+    if (heard.length) lines.push(`Within earshot through an open doorway (NOT present: can't see the protagonist or reach them; hear ordinary speech, muffled, and can call back): ${heard.join("; ")}`);
+    const nearby = who(siblings.filter((r) => !earshot.has(r.id)));
     if (nearby.length) lines.push(`Nearby but NOT present (cannot see the protagonist; hear only shouting or loud noise): ${nearby.join("; ")}`);
     const things = store.children(here.id).filter((c) => c.kind === "item" || c.kind === "container");
     if (things.length) lines.push("Objects:", ...things.flatMap((t) => itemLine(store, t)));
@@ -274,8 +294,9 @@ export function describeScene(store: WorldStore, playerId: string): { text: stri
     ...store.children(playerId).map((c) => c.id),
     ...(here ? [here.id, ...store.children(here.id).map((c) => c.id)] : []),
     ...present.flatMap((c) => store.children(c.id).map((x) => x.id)),
+    ...also,
   ]);
-  const allFacts = store.facts();
+  const allFacts = store.activeFacts();
   const facts = [...new Map([...allFacts.filter((f) => f.subjects.some((x) => near.has(x))).slice(-40), ...allFacts.slice(-10)].map((f) => [f.id, f])).values()].sort(
     (a, b) => a.id - b.id,
   );
